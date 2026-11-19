@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "mutex-recover",
+  "operation": "mutex.recover",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k07",
+    "ssh_port": 2228,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k07-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "mutex_guest_build": "/home/lab/k07/build-01"
+  },
+  "inputs": {}
+}

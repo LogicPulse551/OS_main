@@ -1,0 +1,9 @@
+config KCONC_REGMAP_TEST
+	bool "Kconc synchronous regmap lifecycle test entry"
+	depends on REGMAP
+	select REGMAP_RAM
+	help
+	  Build the root-only /dev/kconc-regmap testing entry into the kernel.
+	  Operations call the real regmap core and its upstream RAM testing bus
+	  synchronously in the calling task. This is an experimental interface,
+	  not a hardware driver or a production userspace regmap ABI.

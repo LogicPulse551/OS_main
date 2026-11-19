@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "rule": "skip-noop",
+  "kernel_revision": "2fc2e45b0cd75cd56f252a0872a6d039f46cc42b",
+  "llvm_revision": "dc5c6d008f487eea8f5d646011f9b3dca6caebd7",
+  "config_sha256": "410b26e878dc093f27e29b8c77091c75d0f57116a92cbbbb974ee9489cb13a22",
+  "clang_sha256": "f3765cf3cc48f6c60743fa433ddc50a5f535f892af6a2e14c9b6d1b8a5a06305",
+  "fixture_sha256": "0cb34466830fa4ad55463c8fb3eade6b3ef2e0fff486d120bbe91bb69015e4fb",
+  "kernel_inputs": {
+    "drivers/base/regmap/regmap.c": "3d4b622a577f2a008539727d9d26b422112da67dcea170e05ba9d567e2f5a7a9",
+    "drivers/base/regmap/internal.h": "ba77ebe952556f58a2814386357fdd40d08680fdc000241e2263f7dab5e18e25",
+    "drivers/base/regmap/regmap-debugfs.c": "6a3aa0eae0efa081b6612a51e2ba462607b41cdd3af92621d68a6541fcffc998",
+    "include/linux/regmap.h": "997a1abbc10459fd2651aadb1f8f9365633002603f2423d04108fe84be098b17",
+    "drivers/base/regmap/trace.h": "58ddc0930c6dbbd120fb1707f3e08651c9068465be2e0d9905f5514f060fa41c",
+    "include/vdso/align.h": "8e7ce9486c193d4a46395d4f14d56c01a0f9e06e95fd4d5bdd9b35a236d98ff8",
+    "include/linux/stddef.h": "be64ec13fdb2d724c1830ebcd04854612ccab9593e2d829011c8352f73a378b2",
+    "include/uapi/asm-generic/errno-base.h": "2c148e92b8318deeb767fabd60822113e575ee664ff09a1873aed8f7a495793c"
+  },
+  "generated_sha256": {
+    "reference": "253d68159a95b9dc6f9abd71109338e41e56de5fc6cb76ecf041058ac6e60fb5",
+    "optimized": "1672de2e15f3884aa1f691bdd6072c0428e88494e588d9278f223bbc595158b8"
+  },
+  "scope": {
+    "entry": "built-in synchronous BMA400 RAM-bus fixture",
+    "object": "owned live map; per-map debugfs disabled before first possible publication",
+    "buffer": "caller-owned live storage, disjoint from the map for the duration of the read",
+    "operation": "six 8-bit volatile registers starting at 0x04 in three two-byte transfers",
+    "stability": "configured callback remains fixed throughout the conversion; no reinit or concurrent teardown",
+    "observations": "return, bytes including an error prefix, bus operations, successful bulk trace",
+    "observer_policy": "choose original before I/O to observe callback entries; functional mode excludes such probes",
+    "trust": "audited caller and constructor, synchronous Linux bus, C projection, compiler and kernel build"
+  }
+}

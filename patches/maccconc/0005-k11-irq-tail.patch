@@ -1,0 +1,858 @@
+From: KConc competition team
+Subject: [K11] Exclude complete x86 IDT asynchronous IRQ context from task KCOV
+
+Based on Linux/MAccConc commit 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b
+with the accepted 0003 K10 control patch. This adds task-owned nesting around
+the three asynchronous IDT wrappers; it does not filter recorded traces,
+disable interrupts, change the delay budget, or modify synchronous exceptions.
+CONFIG_X86_FRED and CONFIG_XEN must be disabled for the declared build scope.
+The existing explicit remote-softirq exception is retained without extending
+the supported execution model to nested remote/IRQ coverage.
+License: GPL-2.0 (same as the modified Linux files).
+
+diff --git a/arch/x86/include/asm/idtentry.h b/arch/x86/include/asm/idtentry.h
+--- a/arch/x86/include/asm/idtentry.h
++++ b/arch/x86/include/asm/idtentry.h
+@@ -1,57 +1,58 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+ #ifndef _ASM_X86_IDTENTRY_H
+ #define _ASM_X86_IDTENTRY_H
+ 
+ /* Interrupts/Exceptions */
+ #include <asm/trapnr.h>
+ 
+ #define IDT_ALIGN	(8 * (1 + HAS_KERNEL_IBT))
+ 
+ #ifndef __ASSEMBLER__
+ #include <linux/entry-common.h>
+ #include <linux/hardirq.h>
++#include <linux/kcov.h>
+ 
+ #include <asm/irq_stack.h>
+ 
+ typedef void (*idtentry_t)(struct pt_regs *regs);
+ 
+ /**
+  * DECLARE_IDTENTRY - Declare functions for simple IDT entry points
+  *		      No error code pushed by hardware
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Declares four functions:
+  * - The ASM entry point: asm_##func
+  * - The XEN PV trap entry point: xen_##func (maybe unused)
+  * - The C handler called from the FRED event dispatcher (maybe unused)
+  * - The C handler called from the ASM entry point
+  *
+  * Note: This is the C variant of DECLARE_IDTENTRY(). As the name says it
+  * declares the entry points for usage in C code. There is an ASM variant
+  * as well which is used to emit the entry stubs in entry_32/64.S.
+  */
+ #define DECLARE_IDTENTRY(vector, func)					\
+ 	asmlinkage void asm_##func(void);				\
+ 	asmlinkage void xen_asm_##func(void);				\
+ 	void fred_##func(struct pt_regs *regs);				\
+ 	__visible void func(struct pt_regs *regs)
+ 
+ /**
+  * DEFINE_IDTENTRY - Emit code for simple IDT entry points
+  * @func:	Function name of the entry point
+  *
+  * @func is called from ASM entry code with interrupts disabled.
+  *
+  * The macro is written so it acts as function definition. Append the
+  * body with a pair of curly brackets.
+  *
+  * irqentry_enter() contains common code which has to be invoked before
+  * arbitrary code in the body. irqentry_exit() contains common code
+  * which has to run before returning to the low level assembly code.
+  */
+ #define DEFINE_IDTENTRY(func)						\
+ static __always_inline void __##func(struct pt_regs *regs);		\
+ 									\
+ __visible noinstr void func(struct pt_regs *regs)			\
+ {									\
+@@ -167,182 +168,191 @@
+  * DEFINE_IDTENTRY_RAW_ERRORCODE - Emit code for raw IDT entry points
+  * @func:	Function name of the entry point
+  *
+  * @func is called from ASM entry code with interrupts disabled.
+  *
+  * The macro is written so it acts as function definition. Append the
+  * body with a pair of curly brackets.
+  *
+  * Contrary to DEFINE_IDTENTRY_ERRORCODE() this does not invoke the
+  * irqentry_enter/exit() helpers before and after the body invocation. This
+  * needs to be done in the body itself if applicable. Use if extra work
+  * is required before the enter/exit() helpers are invoked.
+  */
+ #define DEFINE_IDTENTRY_RAW_ERRORCODE(func)				\
+ __visible noinstr void func(struct pt_regs *regs, unsigned long error_code)
+ 
+ /**
+  * DECLARE_IDTENTRY_IRQ - Declare functions for device interrupt IDT entry
+  *			  points (common/spurious)
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Maps to DECLARE_IDTENTRY_ERRORCODE()
+  */
+ #define DECLARE_IDTENTRY_IRQ(vector, func)				\
+ 	DECLARE_IDTENTRY_ERRORCODE(vector, func)
+ 
+ /**
+  * DEFINE_IDTENTRY_IRQ - Emit code for device interrupt IDT entry points
+  * @func:	Function name of the entry point
+  *
+  * The vector number is pushed by the low level entry stub and handed
+  * to the function as error_code argument which needs to be truncated
+  * to an u8 because the push is sign extending.
+  *
+  * irq_enter/exit_rcu() are invoked before the function body and the
+  * KVM L1D flush request is set. Stack switching to the interrupt stack
+  * has to be done in the function body if necessary.
+  */
+ #define DEFINE_IDTENTRY_IRQ(func)					\
+ static void __##func(struct pt_regs *regs, u32 vector);			\
+ 									\
+ __visible noinstr void func(struct pt_regs *regs,			\
+ 			    unsigned long error_code)			\
+ {									\
+-	irqentry_state_t state = irqentry_enter(regs);			\
++	irqentry_state_t state;						\
+ 	u32 vector = (u32)(u8)error_code;				\
++	kcov_async_irq_enter();					\
++	state = irqentry_enter(regs);				\
+ 									\
+ 	kvm_set_cpu_l1tf_flush_l1d();                                   \
+ 	instrumentation_begin();					\
+ 	run_irq_on_irqstack_cond(__##func, regs, vector);		\
+ 	instrumentation_end();						\
+ 	irqentry_exit(regs, state);					\
++	kcov_async_irq_exit();						\
+ }									\
+ 									\
+ static noinline void __##func(struct pt_regs *regs, u32 vector)
+ 
+ /**
+  * DECLARE_IDTENTRY_SYSVEC - Declare functions for system vector entry points
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Declares three functions:
+  * - The ASM entry point: asm_##func
+  * - The XEN PV trap entry point: xen_##func (maybe unused)
+  * - The C handler called from the ASM entry point
+  *
+  * Maps to DECLARE_IDTENTRY().
+  */
+ #define DECLARE_IDTENTRY_SYSVEC(vector, func)				\
+ 	DECLARE_IDTENTRY(vector, func)
+ 
+ /**
+  * DEFINE_IDTENTRY_SYSVEC - Emit code for system vector IDT entry points
+  * @func:	Function name of the entry point
+  *
+  * irqentry_enter/exit() and irq_enter/exit_rcu() are invoked before the
+  * function body. KVM L1D flush request is set.
+  *
+  * Runs the function on the interrupt stack if the entry hit kernel mode
+  */
+ #define DEFINE_IDTENTRY_SYSVEC(func)					\
+ static void __##func(struct pt_regs *regs);				\
+ 									\
+ static __always_inline void instr_##func(struct pt_regs *regs)		\
+ {									\
+ 	run_sysvec_on_irqstack_cond(__##func, regs);			\
+ }									\
+ 									\
+ __visible noinstr void func(struct pt_regs *regs)			\
+ {									\
+-	irqentry_state_t state = irqentry_enter(regs);			\
++	irqentry_state_t state;						\
++	kcov_async_irq_enter();					\
++	state = irqentry_enter(regs);				\
+ 									\
+ 	kvm_set_cpu_l1tf_flush_l1d();                                   \
+ 	instrumentation_begin();					\
+ 	instr_##func (regs);						\
+ 	instrumentation_end();						\
+ 	irqentry_exit(regs, state);					\
++	kcov_async_irq_exit();						\
+ }									\
+ 									\
+ void fred_##func(struct pt_regs *regs)					\
+ {									\
+ 	instr_##func (regs);						\
+ }									\
+ 									\
+ static noinline void __##func(struct pt_regs *regs)
+ 
+ /**
+  * DEFINE_IDTENTRY_SYSVEC_SIMPLE - Emit code for simple system vector IDT
+  *				   entry points
+  * @func:	Function name of the entry point
+  *
+  * Runs the function on the interrupted stack. No switch to IRQ stack and
+  * only the minimal __irq_enter/exit() handling.
+  *
+  * Only use for 'empty' vectors like reschedule IPI and KVM posted
+  * interrupt vectors.
+  */
+ #define DEFINE_IDTENTRY_SYSVEC_SIMPLE(func)				\
+ static __always_inline void __##func(struct pt_regs *regs);		\
+ 									\
+ static __always_inline void instr_##func(struct pt_regs *regs)		\
+ {									\
+ 	__irq_enter_raw();						\
+ 	__##func (regs);						\
+ 	__irq_exit_raw();						\
+ }									\
+ 									\
+ __visible noinstr void func(struct pt_regs *regs)			\
+ {									\
+-	irqentry_state_t state = irqentry_enter(regs);			\
++	irqentry_state_t state;						\
++	kcov_async_irq_enter();					\
++	state = irqentry_enter(regs);				\
+ 									\
+ 	kvm_set_cpu_l1tf_flush_l1d();                                   \
+ 	instrumentation_begin();					\
+ 	instr_##func (regs);						\
+ 	instrumentation_end();						\
+ 	irqentry_exit(regs, state);					\
++	kcov_async_irq_exit();						\
+ }									\
+ 									\
+ void fred_##func(struct pt_regs *regs)					\
+ {									\
+ 	instr_##func (regs);						\
+ }									\
+ 									\
+ static __always_inline void __##func(struct pt_regs *regs)
+ 
+ /**
+  * DECLARE_IDTENTRY_XENCB - Declare functions for XEN HV callback entry point
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Declares three functions:
+  * - The ASM entry point: asm_##func
+  * - The XEN PV trap entry point: xen_##func (maybe unused)
+  * - The C handler called from the ASM entry point
+  *
+  * Maps to DECLARE_IDTENTRY(). Distinct entry point to handle the 32/64-bit
+  * difference
+  */
+ #define DECLARE_IDTENTRY_XENCB(vector, func)				\
+ 	DECLARE_IDTENTRY(vector, func)
+ 
+ #ifdef CONFIG_X86_64
+ /**
+  * DECLARE_IDTENTRY_IST - Declare functions for IST handling IDT entry points
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Maps to DECLARE_IDTENTRY_RAW, but declares also the NOIST C handler
+  * which is called from the ASM entry point on user mode entry
+  */
+ #define DECLARE_IDTENTRY_IST(vector, func)				\
+ 	DECLARE_IDTENTRY_RAW(vector, func);				\
+ 	__visible void noist_##func(struct pt_regs *regs)
+ 
+ /**
+  * DECLARE_IDTENTRY_VC - Declare a function for the VC entry point
+  * @vector:	Vector number (ignored for C)
+  * @func:	Function name of the entry point
+  *
+  * Maps to DECLARE_IDTENTRY_RAW_ERRORCODE.
+  */
+diff --git a/include/linux/kcov.h b/include/linux/kcov.h
+--- a/include/linux/kcov.h
++++ b/include/linux/kcov.h
+@@ -1,132 +1,155 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+ #ifndef _LINUX_KCOV_H
+ #define _LINUX_KCOV_H
+ 
+ #include <linux/sched.h>
+ #include <uapi/linux/kcov.h>
+ 
+ struct task_struct;
+ 
+ #ifdef CONFIG_KCOV
+ 
+ enum kcov_mode {
+ 	/* Coverage collection is not enabled yet. */
+ 	KCOV_MODE_DISABLED = 0,
+ 	/* KCOV was initialized, but tracing mode hasn't been chosen yet. */
+ 	KCOV_MODE_INIT = 1,
+ 	/*
+ 	 * Tracing coverage collection mode.
+ 	 * Covered PCs are collected in a per-task buffer.
+ 	 */
+ 	KCOV_MODE_TRACE_PC = 2,
+ 	/* Collecting comparison operands mode. */
+ 	KCOV_MODE_TRACE_CMP = 3,
+ };
+ 
+ #define KCOV_ENABLE_MEMORY (1 << 28)
+ /*
+  * Modifier for KCOV_MODE_TRACE_PC to record function entry/exit marked with
+  * metadata bits.
+  */
+ #define KCOV_EXT_FORMAT	(1 << 29)
+ #define KCOV_IN_CTXSW	(1 << 30)
+ 
+ #define KCOV_MODE_TRACE_PC_EXT (KCOV_MODE_TRACE_PC | KCOV_EXT_FORMAT)
+ #define KCOV_MODE_TRACE_PC_AND_MEM (KCOV_MODE_TRACE_PC_EXT | KCOV_ENABLE_MEMORY)
++
++/*
++ * Track the complete x86 IDT asynchronous IRQ wrapper, including entry and
++ * exit work outside HARDIRQ_OFFSET/the IRQ stack. Keep this state with the
++ * interrupted task: irqentry_exit() may schedule or migrate that task.
++ * Call only at IRQ-disabled noinstr boundaries; do not reset on KCOV mode
++ * changes. Synchronous exception wrappers deliberately do not use this API.
++ */
++static __always_inline void kcov_async_irq_enter(void)
++{
++	WRITE_ONCE(current->kcov_async_irq_depth,
++		   READ_ONCE(current->kcov_async_irq_depth) + 1);
++	barrier();
++}
++
++static __always_inline void kcov_async_irq_exit(void)
++{
++	barrier();
++	WRITE_ONCE(current->kcov_async_irq_depth,
++		   READ_ONCE(current->kcov_async_irq_depth) - 1);
++}
+ 
+ void kcov_task_init(struct task_struct *t);
+ void kcov_task_exit(struct task_struct *t);
+ 
+ void kcov_prepare_switch(struct task_struct *cur);
+ void kcov_finish_switch(struct task_struct *cur);
+ 
+ /* See Documentation/dev-tools/kcov.rst for usage details. */
+ void kcov_remote_start(u64 handle);
+ void kcov_remote_stop(void);
+ struct kcov_common_handle_id kcov_common_handle(void);
+ 
+ static inline u64 kcov_common_handle_val(struct kcov_common_handle_id id)
+ {
+ 	return id.val;
+ }
+ 
+ static inline void kcov_remote_start_common(struct kcov_common_handle_id id)
+ {
+ 	kcov_remote_start(kcov_remote_handle(KCOV_SUBSYSTEM_COMMON, id.val));
+ }
+ 
+ static inline void kcov_remote_start_usb(u64 id)
+ {
+ 	kcov_remote_start(kcov_remote_handle(KCOV_SUBSYSTEM_USB, id));
+ }
+ 
+ /*
+  * The softirq flavor of kcov_remote_*() functions is introduced as a temporary
+  * work around for kcov's lack of nested remote coverage sections support in
+  * task context. Adding support for nested sections is tracked in:
+  * https://bugzilla.kernel.org/show_bug.cgi?id=210337
+  */
+ 
+ static inline void kcov_remote_start_usb_softirq(u64 id)
+ {
+ 	if (in_serving_softirq() && !in_hardirq())
+ 		kcov_remote_start_usb(id);
+ }
+ 
+ static inline void kcov_remote_stop_softirq(void)
+ {
+ 	if (in_serving_softirq() && !in_hardirq())
+ 		kcov_remote_stop();
+ }
+ 
+ #ifdef CONFIG_64BIT
+ typedef unsigned long kcov_u64;
+ #else
+ typedef unsigned long long kcov_u64;
+ #endif
+ 
+ void __sanitizer_cov_trace_pc(void);
+ void __sanitizer_cov_trace_pc_entry(void);
+ void __sanitizer_cov_trace_pc_exit(void);
+ void __sanitizer_cov_trace_cmp1(u8 arg1, u8 arg2);
+ void __sanitizer_cov_trace_cmp2(u16 arg1, u16 arg2);
+ void __sanitizer_cov_trace_cmp4(u32 arg1, u32 arg2);
+ void __sanitizer_cov_trace_cmp8(kcov_u64 arg1, kcov_u64 arg2);
+ void __sanitizer_cov_trace_const_cmp1(u8 arg1, u8 arg2);
+ void __sanitizer_cov_trace_const_cmp2(u16 arg1, u16 arg2);
+ void __sanitizer_cov_trace_const_cmp4(u32 arg1, u32 arg2);
+ void __sanitizer_cov_trace_const_cmp8(kcov_u64 arg1, kcov_u64 arg2);
+ void __sanitizer_cov_trace_switch(kcov_u64 val, void *cases);
+ 
+ #else
+ 
++static __always_inline void kcov_async_irq_enter(void) {}
++static __always_inline void kcov_async_irq_exit(void) {}
+ static inline void kcov_task_init(struct task_struct *t) {}
+ static inline void kcov_task_exit(struct task_struct *t) {}
+ static inline void kcov_prepare_switch(struct task_struct *t) {}
+ static inline void kcov_finish_switch(struct task_struct *t) {}
+ static inline void kcov_remote_start(u64 handle) {}
+ static inline void kcov_remote_stop(void) {}
+ static inline struct kcov_common_handle_id kcov_common_handle(void)
+ {
+ 	return (struct kcov_common_handle_id){};
+ }
+ static inline u64 kcov_common_handle_val(struct kcov_common_handle_id id)
+ {
+ 	return 0;
+ }
+ static inline void kcov_remote_start_common(struct kcov_common_handle_id id) {}
+ static inline void kcov_remote_start_usb(u64 id) {}
+ static inline void kcov_remote_start_usb_softirq(u64 id) {}
+ static inline void kcov_remote_stop_softirq(void) {}
+ 
+ #endif /* CONFIG_KCOV */
+ 
+ #ifdef CONFIG_KCOV_MEMORY
+ void __kcov_handle_memaccess(const volatile void *p, size_t size, unsigned int type,
+ 		unsigned long ret_ip);
+ #else /* CONFIG_KCOV_MEMORY */
+ static inline void __kcov_handle_memaccess(const volatile void *p, size_t size,
+ 		unsigned int type, unsigned long ret_ip) {}
+ #endif /* CONFIG_KCOV_MEMORY */
+ 
+ #endif /* _LINUX_KCOV_H */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1499,90 +1499,93 @@
+ 	unsigned long			*ret_stack;
+ 
+ 	/* Timestamp for last schedule: */
+ 	unsigned long long		ftrace_timestamp;
+ 	unsigned long long		ftrace_sleeptime;
+ 
+ 	/*
+ 	 * Number of functions that haven't been traced
+ 	 * because of depth overrun:
+ 	 */
+ 	atomic_t			trace_overrun;
+ 
+ 	/* Pause tracing: */
+ 	atomic_t			tracing_graph_pause;
+ #endif
+ 
+ #ifdef CONFIG_TRACING
+ 	/* Bitmask and counter of trace recursion: */
+ 	unsigned long			trace_recursion;
+ #endif /* CONFIG_TRACING */
+ 
+ #ifdef CONFIG_KCOV
+ 	/* See kernel/kcov.c for more details. */
+ 
+ 	/* Coverage collection mode enabled for this task (0 if disabled): */
+ 	unsigned int			kcov_mode;
+ 
+ 	/* Size of the kcov_area: */
+ 	unsigned int			kcov_size;
+ 
+ 	/* Buffer for coverage collection: */
+ 	void				*kcov_area;
+ 
+ 	/* KCOV descriptor wired with this task or NULL: */
+ 	struct kcov			*kcov;
+ 
+ 	/* KCOV descriptor for remote coverage collection from other tasks: */
+ 	struct kcov			*kcov_remote;
+ 
+ 	/* KCOV common handle for remote coverage collection: */
+ 	u64				kcov_handle;
+ 
+ 	/* KCOV sequence number: */
+ 	int				kcov_sequence;
+ 
++	/* Complete asynchronous IRQ entry/exit nesting for KCOV: */
++	unsigned int			kcov_async_irq_depth;
++
+ 	/* Collect coverage from softirq context: */
+ 	unsigned int			kcov_softirq;
+ #endif
+ 
+ #ifdef CONFIG_MEMCG_V1
+ 	struct mem_cgroup		*memcg_in_oom;
+ #endif
+ 
+ #ifdef CONFIG_MEMCG
+ 	/* Number of pages to reclaim on returning to userland: */
+ 	unsigned int			memcg_nr_pages_over_high;
+ 
+ 	/* Used by memcontrol for targeted memcg charge: */
+ 	struct mem_cgroup		*active_memcg;
+ 
+ 	/* Cache for current->cgroups->memcg->nodeinfo[nid]->objcg lookups: */
+ 	struct obj_cgroup		*objcg;
+ #endif
+ 
+ #ifdef CONFIG_BLK_CGROUP
+ 	struct gendisk			*throttle_disk;
+ #endif
+ 
+ #ifdef CONFIG_UPROBES
+ 	struct uprobe_task		*utask;
+ #endif
+ #if defined(CONFIG_BCACHE) || defined(CONFIG_BCACHE_MODULE)
+ 	unsigned int			sequential_io;
+ 	unsigned int			sequential_io_avg;
+ #endif
+ 	struct kmap_ctrl		kmap_ctrl;
+ #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
+ 	unsigned long			task_state_change;
+ # ifdef CONFIG_PREEMPT_RT
+ 	unsigned long			saved_state_change;
+ # endif
+ #endif
+ 	struct rcu_head			rcu;
+ 	refcount_t			rcu_users;
+ 	int				pagefault_disabled;
+ #ifdef CONFIG_MMU
+ 	struct task_struct		*oom_reaper_list;
+ 	struct timer_list		oom_reaper_timer;
+ #endif
+ #ifdef CONFIG_VMAP_STACK
+diff --git a/kernel/kcov.c b/kernel/kcov.c
+--- a/kernel/kcov.c
++++ b/kernel/kcov.c
+@@ -176,90 +176,99 @@
+ 	struct list_head *pos;
+ 
+ 	list_for_each(pos, &kcov_remote_areas) {
+ 		area = list_entry(pos, struct kcov_remote_area, list);
+ 		if (area->size == size) {
+ 			list_del(&area->list);
+ 			return area;
+ 		}
+ 	}
+ 	return NULL;
+ }
+ 
+ /* Must be called with kcov_remote_lock locked. */
+ static void kcov_remote_area_put(struct kcov_remote_area *area,
+ 					unsigned int size)
+ {
+ 	INIT_LIST_HEAD(&area->list);
+ 	area->size = size;
+ 	list_add(&area->list, &kcov_remote_areas);
+ 	/*
+ 	 * KMSAN doesn't instrument this file, so it may not know area->list
+ 	 * is initialized. Unpoison it explicitly to avoid reports in
+ 	 * kcov_remote_area_get().
+ 	 */
+ 	kmsan_unpoison_memory(&area->list, sizeof(area->list));
+ }
+ 
+ /*
+  * Unlike in_serving_softirq(), this function returns false when called during
+  * a hardirq or an NMI that happened in the softirq context.
+  */
+ static __always_inline bool in_softirq_really(void)
+ {
+ 	return in_serving_softirq() && !in_hardirq() && !in_nmi();
+ }
+ 
+ static notrace bool check_kcov_context(struct task_struct *t)
+ {
+ 	/*
+ 	 * We are interested in code coverage as a function of a syscall inputs,
+ 	 * so we ignore code executed in interrupts, unless we are in a remote
+ 	 * coverage collection section in a softirq.
+ 	 */
+ 	if (!in_task() && !(in_softirq_really() && t->kcov_softirq))
+ 		return false;
++	/*
++	 * An asynchronous IRQ's return tail can run on the task stack after
++	 * HARDIRQ_OFFSET is gone. Reject it before it can append records or
++	 * mutate delay-injection stack state. Preserve the existing explicit
++	 * remote-softirq exception; this is not a new remote/IRQ test backend.
++	 */
++	if (READ_ONCE(t->kcov_async_irq_depth) &&
++	    !(in_softirq_really() && t->kcov_softirq))
++		return false;
+ #ifdef CONFIG_X86_64
+ 	/*
+ 	 * __irq_exit_rcu() drops HARDIRQ_OFFSET before its timer/softirq
+ 	 * tail. in_task() alone then admits that IRQ-stack activity into
+ 	 * the interrupted task's trace. Keep the original remote-softirq
+ 	 * exception. This marker does not cover all outer IRQ-return tails.
+ 	 */
+ 	if (raw_cpu_read(hardirq_stack_inuse) &&
+ 	    !(in_softirq_really() && t->kcov_softirq))
+ 		return false;
+ #endif
+ 	/*
+ 	 * There is some code that runs in interrupts but for which
+ 	 * in_interrupt() returns false (e.g. preempt_schedule_irq()).
+ 	 * READ_ONCE()/barrier() effectively provides load-acquire wrt
+ 	 * interrupts, there are paired barrier()/WRITE_ONCE() in
+ 	 * kcov_start().
+ 	 */
+ 	barrier();
+ 	return true;
+ }
+ 
+ static notrace unsigned long canonicalize_ip(unsigned long ip)
+ {
+ #ifdef CONFIG_RANDOMIZE_BASE
+ 	ip -= kaslr_offset();
+ #endif
+ 	return ip;
+ }
+ 
+ static __always_inline notrace
+ void kcov_add_pc_record(struct task_struct *t, unsigned long record, bool hasext, unsigned long ext)
+ {
+ 	unsigned long *area;
+ 	unsigned long pos;
+ 
+ 	if (!check_kcov_context(t))
+ 		return;
+ 
+ 	area = t->kcov_area;
+ 	/* The first 64-bit word is the number of subsequent PCs. */
+ 	pos = READ_ONCE(area[0]) + 1;
+ 	if (likely(pos + (hasext?1:0) < t->kcov_size)) {
+ 		/* Previously we write pc before updating pos. However, some
+ 		 * early interrupt code could bypass check_kcov_context() check
+@@ -310,131 +319,137 @@
+ 
+ 			if (dis->nomatch_depth || kcov->di.stack_used >= dis->num_elems-1) {
+ no_match:
+ 				if (need_increments)
+ 					dis->nomatch_depth++;
+ 				continue;
+ 			}
+ 			next_elem = &dis->elems[kcov->di.stack_used];
+ 			if (next_elem->ip != ip)
+ 				goto no_match;
+ 			if (need_increments == 0)
+ 				next_elem->cur_parent_idx++;
+ 			if (next_elem->parent_idx != next_elem->cur_parent_idx-1)
+ 				goto no_match;
+ 
+ 			/* going a step down in the di_stack */
+ 			no_matches = false;
+ 			next_elem[1].cur_parent_idx = 0;
+ 		}
+ 
+ 		if (likely(need_increments == 0 && no_matches)) {
+ 			kcov->di.shared_nomatch_depth++;
+ 			return;
+ 		}
+ 		/* do second pass and increment individual nomatch counters */
+ 	}
+ 
+ 	kcov->di.stack_used++;
+ }
+ 
+ void notrace __sanitizer_cov_trace_pc_entry(void)
+ {
+ 	struct task_struct *cur = current;
+ 	unsigned long ip = canonicalize_ip(_RET_IP_);
+ 	unsigned long record = ip;
+ 	unsigned int kcov_mode = READ_ONCE(cur->kcov_mode);
+ 	bool ext_format;
+ 	struct kcov *kcov;
+ 
+ 	/*
+ 	 * This hook replaces __sanitizer_cov_trace_pc() for the function entry
+ 	 * basic block; it should still emit a record even in classic kcov mode.
+ 	 */
+ 	if ((kcov_mode & ~(KCOV_ENABLE_MEMORY|KCOV_EXT_FORMAT|KCOV_IN_CTXSW)) != KCOV_MODE_TRACE_PC)
+ 		return;
++	if (READ_ONCE(cur->kcov_async_irq_depth) &&
++	    !(in_softirq_really() && cur->kcov_softirq))
++		return;
+ 	if (kcov_mode & KCOV_IN_CTXSW) {
+ 		cur->kcov->suppressed_stack_delta++;
+ 		goto handle_distack;
+ 	}
+ 	ext_format = (kcov_mode & KCOV_EXT_FORMAT) != 0;
+ 	if (ext_format)
+ 		record = (record & KCOV_RECORD_IP_MASK) | KCOV_RECORDFLAG_TYPE_ENTRY;
+ 	/*
+ 	 * __builtin_return_address(1) is safe because this function is only
+ 	 * called from C functions, which are compiled with frame pointers
+ 	 * enabled
+ 	 */
+ 	kcov_add_pc_record(cur, record, ext_format, (unsigned long)__builtin_return_address(1));
+ 
+ handle_distack:
+ 	if (IS_ENABLED(CONFIG_KCOV_MEMORY)) {
+ 		kcov = cur->kcov;
+ 		if (unlikely(kcov->di.num_match_stacks)) {
+ 			if (likely(kcov->di.shared_nomatch_depth > 0)) {
+ 				kcov->di.shared_nomatch_depth++;
+ 			} else {
+ 				kcov_di_enter_slowpath(kcov, ip);
+ 			}
+ 		}
+ 	}
+ }
+ void notrace __sanitizer_cov_trace_pc_exit(void)
+ {
+ 	struct task_struct *cur = current;
+ 	unsigned long record;
+ 	unsigned int kcov_mode = READ_ONCE(cur->kcov_mode);
+ 	struct kcov *kcov;
+ 
+ 	/*
+ 	 * This hook is not called at the beginning of a basic block; the basic
+ 	 * block from which the hook was invoked is already covered by a
+ 	 * preceding hook call.
+ 	 * So unlike __sanitizer_cov_trace_pc_entry(), this PC should only be
+ 	 * reported in extended mode, where function exit events are recorded.
+ 	 */
+ 	if ((kcov_mode & ~(KCOV_ENABLE_MEMORY|KCOV_IN_CTXSW)) != KCOV_MODE_TRACE_PC_EXT)
++		return;
++	if (READ_ONCE(cur->kcov_async_irq_depth) &&
++	    !(in_softirq_really() && cur->kcov_softirq))
+ 		return;
+ 	if (kcov_mode & KCOV_IN_CTXSW) {
+ 		struct kcov *kcov = cur->kcov;
+ 
+ 		if (kcov->suppressed_stack_mindelta == kcov->suppressed_stack_delta)
+ 			kcov->suppressed_stack_mindelta--;
+ 		kcov->suppressed_stack_delta--;
+ 		goto handle_distack;
+ 	}
+ 	record = (canonicalize_ip(_RET_IP_) & KCOV_RECORD_IP_MASK) | KCOV_RECORDFLAG_TYPE_EXIT;
+ 	kcov_add_pc_record(cur, record, false, 0);
+ 
+ handle_distack:
+ 	if (IS_ENABLED(CONFIG_KCOV_MEMORY)) {
+ 		kcov = cur->kcov;
+ 		if (unlikely(kcov->di.num_match_stacks)) {
+ 			if (likely(kcov->di.shared_nomatch_depth > 0)) {
+ 				kcov->di.shared_nomatch_depth--;
+ 			} else {
+ 				unsigned int i;
+ 
+ 				if (kcov->di.stack_used)
+ 					kcov->di.stack_used--;
+ 				for (i = 0; i < kcov->di.num_match_stacks; i++) {
+ 					struct di_stack *dis = &kcov->di.match_stacks[i];
+ 
+ 					if (dis->nomatch_depth > 0)
+ 						dis->nomatch_depth--;
+ 				}
+ 			}
+ 		}
+ 	}
+ }
+ #endif
+ 
+ #ifdef CONFIG_KCOV_ENABLE_COMPARISONS
+ static void notrace write_comp_data(u64 type, u64 arg1, u64 arg2, u64 ip)
+ {
+ 	struct task_struct *t;
+ 	u64 *area;
+ 	u64 count, start_index, end_pos, max_pos;
+ 
+ 	t = current;
+ 	if (READ_ONCE(t->kcov_mode) != KCOV_MODE_TRACE_CMP || !check_kcov_context(t))
+ 		return;
+@@ -578,90 +593,91 @@
+ static void kcov_start(struct task_struct *t, struct kcov *kcov,
+ 			unsigned int size, void *area, unsigned int mode,
+ 			int sequence)
+ {
+ 	int i;
+ 
+ 	if (IS_ENABLED(CONFIG_KCOV_MEMORY)) {
+ 		/* delay injection */
+ 		kcov->di.stack_used = 0;
+ 		kcov->di.shared_nomatch_depth = 0;
+ 		kcov->di.pending_sync_bit = UINT_MAX;
+ 		for (i = 0; i < kcov->di.num_match_stacks; i++)
+ 			kcov->di.match_stacks[i].elems[0].cur_parent_idx = 0;
+ 	}
+ 
+ 	kcov_debug("t = %px, size = %u, area = %px\n", t, size, area);
+ 	t->kcov = kcov;
+ 	/* Cache in task struct for performance. */
+ 	t->kcov_size = size;
+ 	t->kcov_area = area;
+ 	t->kcov_sequence = sequence;
+ 	/* See comment in check_kcov_context(). */
+ 	barrier();
+ 	WRITE_ONCE(t->kcov_mode, mode);
+ }
+ 
+ /* operates on coverage-generator-owned fields */
+ static void kcov_stop(struct task_struct *t)
+ {
+ 	WRITE_ONCE(t->kcov_mode, KCOV_MODE_DISABLED);
+ 	barrier();
+ 	t->kcov = NULL;
+ 	t->kcov_size = 0;
+ 	t->kcov_area = NULL;
+ }
+ 
+ /* operates on coverage-generator-owned fields */
+ static void kcov_task_reset(struct task_struct *t)
+ {
+ 	kcov_stop(t);
+ 	t->kcov_sequence = 0;
+ }
+ 
+ void kcov_task_init(struct task_struct *t)
+ {
++	t->kcov_async_irq_depth = 0;
+ 	kcov_task_reset(t);
+ 	t->kcov_remote = NULL;
+ 	t->kcov_handle = current->kcov_handle;
+ }
+ 
+ static void kcov_reset(struct kcov *kcov)
+ 	__must_hold(&kcov->lock)
+ {
+ 	kcov->t = NULL;
+ 	kcov->mode = KCOV_MODE_INIT;
+ 	kcov->remote = false;
+ 	kcov->remote_size = 0;
+ 	kcov->sequence++;
+ }
+ 
+ static void kcov_remote_reset(struct kcov *kcov)
+ 	__must_hold(&kcov->lock)
+ {
+ 	int bkt;
+ 	struct kcov_remote *remote;
+ 	struct hlist_node *tmp;
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&kcov_remote_lock, flags);
+ 	hash_for_each_safe(kcov_remote_map, bkt, tmp, remote, hnode) {
+ 		if (remote->kcov != kcov)
+ 			continue;
+ 		hash_del(&remote->hnode);
+ 		kfree(remote);
+ 	}
+ 	/* Do reset before unlock to prevent races with kcov_remote_start(). */
+ 	kcov_reset(kcov);
+ 	spin_unlock_irqrestore(&kcov_remote_lock, flags);
+ }
+ 
+ static void kcov_disable(struct task_struct *t, struct kcov *kcov)
+ 	__must_hold(&kcov->lock)
+ {
+ 	if (kcov->remote) {
+ 		t->kcov_handle = 0;
+ 		t->kcov_remote = NULL;
+ 		kcov_remote_reset(kcov);
+ 	} else {
+ 		kcov_task_reset(t);
+ 		kcov_reset(kcov);

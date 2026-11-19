@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "check-existing-k03-build-identity",
+  "operation": "build.identity",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k03",
+    "ssh_port": 2224,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-2fc2e45b0cd7",
+    "scenario_guest_build": "/home/lab/k03/build-scenario"
+  },
+  "inputs": {}
+}

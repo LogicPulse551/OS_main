@@ -1,0 +1,235 @@
+--- a/runner-common.h
++++ b/runner-common.h
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include <pthread.h>
++#include <errno.h>
+ #include <dlfcn.h>
+ #include <err.h>
+ #include <fcntl.h>
+@@ -69,7 +70,27 @@
+ 
+ #define COVER_SIZE                  (16 << 20/*MiB*/)
+ 
++#ifdef K03_EVIDENCE
++struct K03Control {
++  int child_status, waitpid_result;
++  int gate_called, gate_rc, gate_errno;
++  int b_wake_called, b_wake_rc, b_wake_errno;
++  int a_wake_called, a_wake_rc, a_wake_errno;
++  int reset_called, reset_rc, reset_errno;
++  int a_done, b_done;
++};
++static bool k03_enabled = false;
++static K03Control *k03_control = nullptr;
++static const char *k03_child_stdout_path = nullptr;
++static const char *k03_child_stderr_path = nullptr;
++#endif
++
+ static void kcov_alloc_multi(int num_kcov_insts) {
++#ifdef K03_EVIDENCE
++  if (k03_enabled)
++    k03_control = (K03Control*)SYSCHK(mmap(NULL, sizeof(K03Control), PROT_READ|PROT_WRITE,
++        MAP_SHARED|MAP_ANONYMOUS, -1, 0));
++#endif
+   kcov_insts = (struct kcov_inst*)SYSCHK(mmap(NULL, sizeof(*kcov_insts)*num_kcov_insts, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0));
+   for (int i=0; i<num_kcov_insts; i++) {
+     kcov_insts[i].fd = SYSCHK(open("/sys/kernel/debug/kcov", O_RDWR));
+@@ -85,29 +106,74 @@
+   pin_to(1);
+   SYSCHK(ioctl(kcov_insts[1].fd, KCOV_ENABLE, 3/*KCOV_TRACE_MEMORY_ACCESS*/));
+   pthread_barrier_wait(&rtic_init_barrier);
+-  if (inner)
++  if (inner) {
++#ifdef K03_EVIDENCE
++    if (k03_enabled) k03_control->gate_called = 1;
++    int gate_rc = ioctl(kcov_insts[0].fd, KCOV_SPINWAIT_DI_FLAG, 0);
++    if (k03_enabled) {
++      k03_control->gate_rc = gate_rc;
++      k03_control->gate_errno = gate_rc < 0 ? errno : 0;
++    }
++#else
+     ioctl(kcov_insts[0].fd, KCOV_SPINWAIT_DI_FLAG, 0);
++#endif
++  }
+ 
+   __atomic_store_n(&kcov_insts[1].cover[0], 0, __ATOMIC_RELAXED);
+   // MEASUREMENT STARTS HERE
+   test_thread2();
+   // MEASUREMENT ENDS HERE
+   kcov_insts[1].cover_n = __atomic_load_n(&kcov_insts[1].cover[0], __ATOMIC_RELAXED);
+-  if (inner)
++#ifdef K03_EVIDENCE
++  if (k03_enabled) k03_control->b_done = 1;
++#endif
++  if (inner) {
++#ifdef K03_EVIDENCE
++    if (k03_enabled) k03_control->b_wake_called = 1;
++    int wake_rc = ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 1);
++    if (k03_enabled) {
++      k03_control->b_wake_rc = wake_rc;
++      k03_control->b_wake_errno = wake_rc < 0 ? errno : 0;
++    }
++    SYSCHK(wake_rc);
++#else
+     SYSCHK(ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 1));
++#endif
++  }
+ 
+   pthread_barrier_wait(&rtic_finish_barrier);
+   return NULL;
+ }
+ static unsigned long SPIN_LIMIT = 1000000;
+ static void run_testcase_in_child(bool sequential, bool t2_is_inner) {
++#ifdef K03_EVIDENCE
++  if (k03_enabled) {
++    memset(k03_control, 0, sizeof(*k03_control));
++    k03_control->child_status = -1;
++    k03_control->gate_rc = k03_control->a_wake_rc = k03_control->b_wake_rc = k03_control->reset_rc = -999;
++    kcov_insts[0].cover_n = kcov_insts[1].cover_n = 0;
++    fflush(NULL);
++  }
++#endif
+   pid_t child = SYSCHK(fork());
+   if (child != 0) {
+     int wstatus;
+-    SYSCHK(waitpid(child, &wstatus, 0));
++    int waited = SYSCHK(waitpid(child, &wstatus, 0));
++#ifdef K03_EVIDENCE
++    if (k03_enabled) {
++      k03_control->child_status = wstatus;
++      k03_control->waitpid_result = waited;
++    }
++#endif
+     return;
+   }
+ 
++#ifdef K03_EVIDENCE
++  if (k03_enabled) {
++    if (!freopen(k03_child_stdout_path, "wx", stdout)) err(1, "K03 child stdout");
++    if (!freopen(k03_child_stderr_path, "wx", stderr)) err(1, "K03 child stderr");
++  }
++#endif
+   if (pthread_barrier_init(&rtic_init_barrier, NULL, 2))
+     errx(1, "pthread_barrier_init");
+   if (pthread_barrier_init(&rtic_finish_barrier, NULL, 2))
+@@ -129,13 +195,37 @@
+   test_thread1();
+   // MEASUREMENT ENDS HERE
+   kcov_insts[0].cover_n = __atomic_load_n(&kcov_insts[0].cover[0], __ATOMIC_RELAXED);
+-  if (sequential)
++#ifdef K03_EVIDENCE
++  if (k03_enabled) k03_control->a_done = 1;
++#endif
++  if (sequential) {
++#ifdef K03_EVIDENCE
++    if (k03_enabled) k03_control->a_wake_called = 1;
++    int wake_rc = ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 0);
++    if (k03_enabled) {
++      k03_control->a_wake_rc = wake_rc;
++      k03_control->a_wake_errno = wake_rc < 0 ? errno : 0;
++    }
++    SYSCHK(wake_rc);
++#else
+     SYSCHK(ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 0));
++#endif
++  }
+ 
+   pthread_barrier_wait(&rtic_finish_barrier);
+   if (pthread_join(thread, NULL))
+     errx(1, "pthread_join");
++#ifdef K03_EVIDENCE
++  if (k03_enabled) k03_control->reset_called = 1;
++  int reset_rc = ioctl(kcov_insts[0].fd, KCOV_RESET_DI_FLAGS, 0);
++  if (k03_enabled) {
++    k03_control->reset_rc = reset_rc;
++    k03_control->reset_errno = reset_rc < 0 ? errno : 0;
++  }
++  SYSCHK(reset_rc);
++#else
+   SYSCHK(ioctl(kcov_insts[0].fd, KCOV_RESET_DI_FLAGS, 0));
++#endif
+   test_end();
+   exit(0);
+ }
+--- a/kcov-autorace.cpp
++++ b/kcov-autorace.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "basic.h"
+ #include "kcov-common.h"
++#define K03_EVIDENCE 1
+ #include "runner-common.h"
+ #include <pthread.h>
+ #include <dlfcn.h>
+@@ -47,9 +48,18 @@
+   SYSCHK(ioctl(kcov_insts[0].fd, KCOV_SET_DI, &di_arg));
+ }
+ 
++#include "k03-evidence.h"
++
+ int main(int argc, char **argv) {
+-  if (argc != 2)
+-    errx(1, "invocation: %s <path to test .so>", argv[0]);
++  bool record_mode = argc == 4 && strcmp(argv[2], "--k03-record") == 0;
++  bool replay_mode = argc == 5 && strcmp(argv[2], "--k03-replay") == 0;
++  if (argc != 2 && !record_mode && !replay_mode)
++    errx(1, "invocation: %s <path to test .so> [--k03-record NEW_DIR | --k03-replay PLAN NEW_DIR]", argv[0]);
++  k03_enabled = record_mode || replay_mode;
++  k03::Stack replay_stack;
++  k03::fs::path output;
++  if (record_mode) { output = argv[3]; k03::new_directory(output); }
++  if (replay_mode) { replay_stack = k03::load_plan(argv[3]); output = argv[4]; }
+   fprintf(stderr, "loading kallsyms\n");
+   kallsyms_load();
+   fprintf(stderr, "RCU state (excluded): base=%lx len=%lx\n", rcu_state_base, rcu_state_len);
+@@ -59,10 +69,18 @@
+ 
+   fprintf(stderr, "initializing kcov\n");
+   kcov_alloc_multi(NUM_KCOV_INSTS);
++  if (replay_mode) {
++    k03::prepare_output(output, &replay_stack);
++    prep_di_for_aba_test(&replay_stack);
++    run_testcase_in_child(false, true);
++    return k03::save_run(false, &replay_stack, true) ? 0 : 2;
++  }
+ 
+   fprintf(stderr, "collecting A-B coverage\n");
++  if (record_mode) k03::prepare_output(output/"baseline", nullptr);
+   prep_di_for_aba_test(nullptr);
+   run_testcase_in_child(true, true);
++  if (record_mode && !k03::save_run(true, nullptr, false)) return 2;
+ 
+   KcovTraceSet ts;
+   ts.traces.push_back(KcovTrace(0));
+@@ -85,9 +103,17 @@
+   unsigned int outcome_injection_failed = 0;
+   unsigned int outcome_wait_timeout = 0;
+   unsigned int outcome_reordered = 0;
++  size_t candidate_index = 0, evidence_control_valid = 0;
+   for (auto& preempt_candidate : preempt_candidates) {
++    if (record_mode) {
++      char directory[64];
++      snprintf(directory, sizeof(directory), "candidate-%06zu", candidate_index);
++      k03::prepare_output(output/directory, &preempt_candidate);
++    }
++    ++candidate_index;
+     prep_di_for_aba_test(&preempt_candidate);
+     run_testcase_in_child(false, true);
++    if (record_mode && k03::save_run(false, &preempt_candidate, false)) ++evidence_control_valid;
+ 
+     bool found_wait = false;
+     bool wait_timed_out = false;
+@@ -112,4 +138,11 @@
+   }
+   fprintf(stderr, "stats:  injection-failed:%u  wait-timeout:%u  reordered:%u\n",
+     outcome_injection_failed, outcome_wait_timeout, outcome_reordered);
++  if (record_mode) {
++    FILE *summary=k03::new_file(output/"summary.json");
++    fprintf(summary, "{\"candidate_count\":%zu,\"upstream_injection_failed\":%u,\"upstream_wait_timeout\":%u,\"upstream_reordered\":%u,\"evidence_control_valid\":%zu}\n",
++            candidate_index,outcome_injection_failed,outcome_wait_timeout,outcome_reordered,evidence_control_valid);
++    k03::close_file(summary);
++    return evidence_control_valid ? 0 : 2;
++  }
+ }

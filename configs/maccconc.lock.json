@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "target": "x86_64-linux-gnu",
+  "sources": {
+    "maccconc": {
+      "url": "https://github.com/googleprojectzero/MAccConc.git",
+      "directory": "maccconc",
+      "commit": "c17ba2d68167d1a892dbdec326bd6cfec32ec9f1",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "git_blobs": {
+        "README.md": "885062304a5f19540deece205f0b7d9f6d830248",
+        "third_party/kcov.h": "3d906728a5407f87b64cd843317fd68a4397e285",
+        "Makefile": "246c989e4ad5c7f00140c97a57c951199d4683f0"
+      },
+      "submodules": [
+        {
+          "path": "third_party/imgui",
+          "url": "https://github.com/ocornut/imgui",
+          "commit": "d946c6932be5b3f490304bd4724ce1bd9f310e47",
+          "license": "MIT",
+          "license_path": "LICENSE.txt"
+        }
+      ],
+      "team_patches": [
+        {
+          "path": "patches/maccconc/0001-terminal-label-gcc12.patch",
+          "sha256": "25696af1f34e321812e06d74f5e66bca6fb96fb9759def6b5bd92853749359a1",
+          "purpose": "Native openEuler GCC12 compatibility: replace terminal decimal label formatting only; preserve one counter increment and width semantics."
+        }
+      ]
+    },
+    "linux": {
+      "url": "https://github.com/thejh/linux.git",
+      "directory": "linux",
+      "commit": "2fc2e45b0cd75cd56f252a0872a6d039f46cc42b",
+      "version": "7.2.0-rc3",
+      "base_commit": "a13c140cc289c0b7b3770bce5b3ad42ab35074aa",
+      "license": "GPL-2.0-only; per-file licenses and Linux-syscall-note apply",
+      "license_path": "COPYING",
+      "git_blobs": {
+        "include/uapi/linux/kcov.h": "88bd11d7d10843ed22758348b04b0e8a47171a54",
+        "scripts/Makefile.kcov": "aa0be904268f1a265c1210d610c08da9356c5dc3"
+      },
+      "upstream_patch_commits": [
+        "22af9e737d18c9d073fc27f133c4a0428aeed505",
+        "345a4a314554c9c24648578d16ab5e6b86795c51",
+        "e4874af59a468a623f8f1d20d9ec883bbf73f2f3",
+        "16148786b8edcb747ea0f310a8a1ed958c47f657",
+        "039515b8073a4ffbae6061360f9b1e4746afa30e",
+        "8ae7c9d9f9a5c3dcaa86c1e41cadaed5cd62edb1",
+        "88553de83b01af5ff05ded4b7ed8b301f59ebe04",
+        "96d3f3b0a3bd7e9b67e9389d8e19cd02e0a4dffa",
+        "e6f2603c3c5952aa01ffa30dfd14cb761fea45ab",
+        "a995d6e4984f9ff9c944ad39742c85d31cbe1bf8",
+        "aaad69f7f78daa2b36b687a96216f63be97059ed",
+        "8d8f8cc28e009d7f6d9cf53857df062302f8707c",
+        "3332f14b0982f97feb47c335ccb3788ded9cf1ae",
+        "781c496d1272a98b201ebb70a2392952ac044f64",
+        "33000040e9e4c0c77caee6ca189ae9fa8dc1cd96",
+        "3796cb778d8b95ae350caa172a713c844c2221e6",
+        "8e15c085b182b6ea2403ea36125047274a03512a",
+        "d7291a5bffe167e9c93153e2493ad67283a2bff5",
+        "46e160fe92c8b1a30309e4d766da62050bf1f93c",
+        "2fc2e45b0cd75cd56f252a0872a6d039f46cc42b"
+      ],
+      "team_patches": []
+    },
+    "llvm": {
+      "url": "https://github.com/llvm/llvm-project.git",
+      "directory": "llvm-project",
+      "commit": "dc5c6d008f487eea8f5d646011f9b3dca6caebd7",
+      "version": "23.0.0git",
+      "license": "Apache-2.0 WITH LLVM-exception; per-file licenses apply",
+      "license_path": "llvm/LICENSE.TXT",
+      "required_feature": "-fsanitize-coverage=trace-pc-entry-exit"
+    }
+  },
+  "build": {
+    "llvm": {
+      "generator": "Ninja",
+      "build_type": "Release",
+      "projects": [
+        "clang",
+        "lld"
+      ],
+      "targets": [
+        "X86"
+      ],
+      "default_parallel_jobs": 2,
+      "bootstrap_linker": "Debian lld; exact package version captured with K02 build evidence"
+    },
+    "kernel": {
+      "arch": "x86_64",
+      "llvm": "absolute path to pinned LLVM install bin directory",
+      "kcflags": "-fno-optimize-sibling-calls -mllvm -sanitizer-coverage-prune-blocks=false",
+      "fragment": "configs/kernel/maccconc-x86_64.fragment",
+      "base_config": "x86_64_defconfig + kvm_guest.config; verify effective config after olddefconfig",
+      "target_features": "built-in, not modules",
+      "build_target": "bzImage (also builds vmlinux); no loadable modules: upstream entry/exit callbacks are not exported",
+      "optional_static_context_analysis": "Disabled: pinned Clang cannot resolve callback parameter bdev in blk_holder_ops release_capability annotations. This is a compile-time diagnostic limitation; required KCOV/KASAN instrumentation remains enabled."
+    },
+    "userspace": {
+      "gui": "build and run on Debian host",
+      "executors": "build against openEuler guest userspace; do not copy unverified Debian-linked binaries",
+      "upstream_c_standard": "gnu23",
+      "upstream_cxx_standard": "gnu++23",
+      "guest_compiler_feature_check_required": true,
+      "guest_link_libraries": [
+        "dw",
+        "capstone",
+        "elf"
+      ],
+      "guest_c_standard_policy": "Probe gnu23; if unavailable record failure and use gnu2x for these checked sources only."
+    }
+  },
+  "dependencies": {
+    "debian_host_packages": [
+      "git",
+      "build-essential",
+      "pkg-config",
+      "libcapstone-dev",
+      "libdw-dev",
+      "libglfw3-dev",
+      "cmake",
+      "ninja-build",
+      "python3",
+      "flex",
+      "bison",
+      "libelf-dev",
+      "libssl-dev",
+      "bc",
+      "libncurses-dev",
+      "rsync",
+      "cpio",
+      "pahole",
+      "lld",
+      "zstd"
+    ],
+    "guest_required_features": [
+      "Compiler accepting GNU C23 or the validated GNU2x subset with stdbool.h, and the used GNU C++23 features",
+      "make and pkg-config",
+      "libdw/elfutils and libelf development headers",
+      "Capstone development headers",
+      "Guest Makefile LIBS overridden to -ldw -lcapstone -lelf; GUI remains on Debian host"
+    ],
+    "package_resolution": "Resolve and record exact binary packages during K02; these names are dependency requirements, not an installed-package lock.",
+    "openeuler_guest_packages": [
+      "gcc",
+      "gcc-c++",
+      "make",
+      "pkgconf-pkg-config",
+      "elfutils-devel",
+      "elfutils-libelf-devel",
+      "capstone-devel",
+      "tar",
+      "gzip",
+      "patch"
+    ]
+  },
+  "runtime": {
+    "guest_userspace": "openEuler 24.03 LTS SP3 x86_64",
+    "default_cpus": 4,
+    "gui_transport": "AF_VSOCK SOCK_STREAM",
+    "host_vsock_cid": 2,
+    "guest_vsock_cid": 5,
+    "vsock_port": 1262702422,
+    "required_qemu_device": "vhost-vsock-pci,guest-cid=5",
+    "debugfs": "/sys/kernel/debug",
+    "kcov_device": "/sys/kernel/debug/kcov",
+    "mount_tmpfs": "/tmp",
+    "guest_kernel_addresses": "CONFIG_RANDOMIZE_BASE=n; retain matching unstripped vmlinux",
+    "target_cpus": [
+      0,
+      1
+    ],
+    "kcov_buffer_words_per_instance": 16777216,
+    "spin_limit": 1000000,
+    "uapi_expected_x86_64": {
+      "unsigned_long_bytes": 8,
+      "memory_access_record_bytes": 40,
+      "kcov_di_stack_bytes": 24,
+      "kcov_set_di_arg_bytes": 24
+    }
+  },
+  "validation_boundary": "Immutable source/configuration lock only. K02 must validate toolchain, effective Kconfig, guest dynamic ABI and VSOCK; K03 must run actual tracing and A-B-A control."
+}

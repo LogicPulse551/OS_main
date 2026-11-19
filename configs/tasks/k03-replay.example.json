@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "reexecute-saved-k03-plan",
+  "operation": "k03.replay",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k03",
+    "ssh_port": 2224,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-2fc2e45b0cd7",
+    "scenario_guest_build": "/home/lab/k03/build-scenario"
+  },
+  "inputs": {
+    "binding": "~/kconc-runs/bind-001/backend",
+    "source_mapper": "~/kconc-tools/source-map"
+  }
+}

@@ -1,0 +1,20 @@
+--- a/regmap-k07-cases.h
++++ b/regmap-k07-cases.h
+@@ -79,12 +79,16 @@
+   return s->abi==KCONC_REGMAP_ABI && s->epoch==epoch && s->state==KCONC_REGMAP_EMPTY &&
+     s->snapshot_valid==1 && k07_zero_metadata(s) && !memcmp(s->values,zero,sizeof(zero));
+ }
++/* Separate K11 build: keep the requested ABI mode, verify the actual shared gate. */
++#if !defined(KCONC_K11_SHARED_GATE) || KCONC_K11_SHARED_GATE != 1
++#error "K11 native adapter requires the explicit shared-gate repair profile"
++#endif
+ static inline bool k07_op_valid(const struct kconc_regmap_op *op,const struct k07_case *c,
+     unsigned int role,unsigned int mode,unsigned int epoch,unsigned int tid,int rc,int err) {
+   const struct k07_input *in=&c->operations[role];const struct kconc_regmap_role *r=&op->result;
+   bool base=op->abi==KCONC_REGMAP_ABI && op->epoch==epoch && op->role==role && op->reg==in->reg &&
+     op->mask==in->mask && op->value==in->value && op->mode==mode && !op->reserved && r->pid==tid && tid &&
+-    r->reg==in->reg && r->mode==mode && r->gate_id==(mode?role+1:0) && r->started==1 && r->completed==1 &&
++    r->reg==in->reg && r->mode==mode && r->gate_id==0 && r->started==1 && r->completed==1 &&
+     !r->preempt_count && !r->irqs_disabled;
+   if (r->outcome==KCONC_REGMAP_OUTCOME_SUCCESS)
+     return base && rc==0 && !err && !r->status && r->acquired==1 && r->released==1 && r->api_calls==1 &&

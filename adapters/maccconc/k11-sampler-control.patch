@@ -1,0 +1,81 @@
+From: kconc competition project
+Subject: [K11] Apply the accepted K10 readiness and abort fix to serial sampling
+
+The accepted K08 and pre-fix K09 runner-common.h have identical bytes.
+This patch applies the same implementation as adapters/maccconc/k10-control.patch;
+the resulting runner must equal the accepted K10 runner byte for byte.
+K10 symbol names are retained to make reuse explicit. No new wait algorithm,
+callback ordering contract or KCOV trace policy is introduced. The finite wait
+can still fail; readiness exhaustion and gate failure terminate the child
+before B's callback, and remain failed evidence instead of a serial sample.
+The inherited source is Copyright 2026 Google LLC, Apache-2.0; the control fix
+is team-authored. The sampler main/evidence sources remain the accepted K08 bytes.
+
+--- a/runner-common.h
++++ b/runner-common.h
+@@ -89,11 +89,23 @@
+   int reset_called, reset_rc, reset_errno;
+   int a_done, b_done;
+   pid_t k08_slot_tids[2];
++  unsigned int k10_a_ready;
+ };
+ static bool k03_enabled = false;
+ static K03Control *k03_control = nullptr;
+ static const char *k03_child_stdout_path = nullptr;
+ static const char *k03_child_stderr_path = nullptr;
++
++// A finite user-space readiness wait preserves the existing traced syscall
++// order. It does not consume the kernel's separate injection spin budget.
++static bool k10_wait_a_ready(unsigned long remaining = 100000000UL) {
++  while (remaining--) {
++    if (__atomic_load_n(&k03_control->k10_a_ready, __ATOMIC_ACQUIRE))
++      return true;
++    __asm__ __volatile__("pause" ::: "memory");
++  }
++  return false;
++}
+ #endif
+ 
+ static void kcov_alloc_multi(int num_kcov_insts) {
+@@ -117,6 +129,15 @@
+   pin_to(1);
+   SYSCHK(ioctl(kcov_insts[1].fd, KCOV_ENABLE, 3/*KCOV_TRACE_MEMORY_ACCESS*/));
+   pthread_barrier_wait(&rtic_init_barrier);
++#ifdef K03_EVIDENCE
++  if (k03_enabled && !k10_wait_a_ready()) {
++    // The gate was never called. Keep its default fields and preserve an
++    // explicit child failure rather than executing an uncontrolled callback.
++    static const char message[] = "K10: slot A readiness budget exhausted\n";
++    (void)write(STDERR_FILENO, message, sizeof(message) - 1);
++    _exit(125);
++  }
++#endif
+   if (inner) {
+ #ifdef K03_EVIDENCE
+     if (k03_enabled) k03_control->gate_called = 1;
+@@ -124,6 +145,13 @@
+     if (k03_enabled) {
+       k03_control->gate_rc = gate_rc;
+       k03_control->gate_errno = gate_rc < 0 ? errno : 0;
++    }
++    if (gate_rc < 0) {
++      // Exit the entire child process; waiting at the finish barrier could
++      // deadlock with the peer. The parent still exports shared gate/status.
++      static const char message[] = "K10: gate failure; callback not executed\n";
++      (void)write(STDERR_FILENO, message, sizeof(message) - 1);
++      _exit(125);
+     }
+ #else
+     ioctl(kcov_insts[0].fd, KCOV_SPINWAIT_DI_FLAG, 0);
+@@ -202,7 +230,10 @@
+   // should be the last syscall before we start
+   SYSCHK(ioctl(kcov_insts[0].fd, KCOV_ENABLE, KCOV_TRACE_MEMORY_ACCESS));
+ 
+-  if (k03_enabled) k03_control->k08_slot_tids[0] = syscall(SYS_gettid);
++  if (k03_enabled) {
++    k03_control->k08_slot_tids[0] = syscall(SYS_gettid);
++    __atomic_store_n(&k03_control->k10_a_ready, 1U, __ATOMIC_RELEASE);
++  }
+   __atomic_store_n(&kcov_insts[0].cover[0], 0, __ATOMIC_RELAXED);
+   // MEASUREMENT STARTS HERE
+   k08_run_slot(0);

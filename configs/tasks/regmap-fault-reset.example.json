@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "exercise-regmap-reset-rejection",
+  "operation": "regmap.fault-reset",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k05",
+    "ssh_port": 2226,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k05-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "regmap_guest_build": "/home/lab/k05/build-01"
+  },
+  "inputs": {}
+}

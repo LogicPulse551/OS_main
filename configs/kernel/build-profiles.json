@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "architecture": "x86_64",
+  "detection": {
+    "required": {"CONFIG_SMP":"y","CONFIG_KCOV":"y","CONFIG_KCOV_MEMORY":"y","CONFIG_KCOV_EXT_RECORDS":"y","CONFIG_KASAN":"y","CONFIG_KASAN_OUTLINE":"y","CONFIG_IKCONFIG_PROC":"y"},
+    "forbidden": [],
+    "measurement_eligible": false
+  },
+  "performance": {
+    "required": {"CONFIG_SMP":"y","CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE":"y","CONFIG_LTO_NONE":"y","CONFIG_IKCONFIG_PROC":"y"},
+    "forbidden": ["CONFIG_KCOV","CONFIG_KASAN","CONFIG_KCSAN","CONFIG_UBSAN","CONFIG_GCOV_KERNEL"],
+    "measurement_eligible": true
+  },
+  "boundary": "Eligibility is configuration only; no benchmark or speedup is established. Ordinary kernel hardening and tracing infrastructure are retained. Modules and dynamically activated instrumentation require separate identity registration."
+}

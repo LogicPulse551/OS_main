@@ -1,0 +1,296 @@
+From: Competition team
+Subject: [PATCH] K11 rmw caller repair and shared-body KUnit
+
+Base: Linux 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b plus accepted K10 family.
+Team-authored repair of the declared caller misuse, not an upstream regmap bug fix.
+The native request ABI and logical operation mode are unchanged.
+KUnit uses the pinned upstream framework; test bodies are team-authored GPL-2.0-only.
+
+--- a/drivers/base/regmap/kconc-regmap.c
++++ b/drivers/base/regmap/kconc-regmap.c
+@@ -4,8 +4,9 @@
+  * Base: Linux 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b (MAccConc tree).
+  * The unmodified regmap-ram.c is Copyright (c) 2023 Arm Ltd, GPL-2.0.
+  * Team code below supplies lifecycle/ABI glue, not a replacement regmap.
+- * SPLIT deliberately misuses separately locked read/write for a logical update;
+- * UPDATE_BITS uses the upstream API whose single lock protects the whole RMW.
++ * K11 keeps SPLIT requests but serializes the complete read/write operation
++ * with one map-wide sleeping mutex, also used by UPDATE_BITS requests.
++ * The observed before/after values remain the actual regmap read/write values.
+  * This test device does not model physical hardware, IRQ or DMA behavior.
+  */
+ #include <linux/compat.h>
+@@ -26,6 +27,7 @@
+ 
+ struct kconc_regmap_context {
+ 	struct mutex guard;
++	struct mutex update_guard;
+ 	struct regmap *map;
+ 	struct regmap_ram_data *ram;
+ 	u32 state;
+@@ -81,10 +83,9 @@
+ }
+ 
+ /*
+- * SPLIT reaches this after regmap_read() released its spinlock and restored
+- * IRQ state, before regmap_write() acquires that lock again. UPDATE_BITS reaches
+- * it before regmap_update_bits(), without claiming to interrupt its locked RMW.
+- * No lifecycle mutex is held. Each logical role owns a distinct slot.
++ * Both modes reach this before update_guard and any real regmap API.
++ * No lifecycle/update/regmap lock is held. Pausing a task here lets the peer
++ * finish a complete update. Each logical role owns a distinct slot.
+  * Bind control to the checkpoint store below, not to a bus callback or lock.
+  */
+ static noinline int kconc_regmap_checkpoint(struct kconc_regmap_role *role,
+@@ -177,12 +178,42 @@
+ 	return 0;
+ }
+ 
++/* Actual synchronous ioctl body; the KUnit fixture calls this same code. */
++static int kconc_execute_operation(struct kconc_regmap_context *ctx,
++				   struct kconc_regmap_role *role,
++				   const struct kconc_regmap_op *request)
++{
++	unsigned int before = 0;
++	unsigned int after = 0;
++	int ret;
++
++	ret = kconc_regmap_checkpoint(role, request->epoch);
++	if (ret)
++		return ret;
++	/* Shared by both request modes, including mixed-mode callers. */
++	mutex_lock(&ctx->update_guard);
++	if (request->mode == KCONC_REGMAP_MODE_SPLIT) {
++		ret = regmap_read(ctx->map, request->reg, &before);
++		role->before = before;
++		if (!ret) {
++			after = (before & ~request->mask) | (request->value & request->mask);
++			ret = regmap_write(ctx->map, request->reg, after);
++		}
++		role->after = after;
++		role->values_valid = !ret;
++	} else {
++		/* The upstream API does not expose its locked before/after. */
++		ret = regmap_update_bits(ctx->map, request->reg,
++					 request->mask, request->value);
++	}
++	mutex_unlock(&ctx->update_guard);
++	return ret;
++}
++
+ static long kconc_operation(struct kconc_regmap_context *ctx, void __user *arg)
+ {
+ 	struct kconc_regmap_op request;
+ 	struct kconc_regmap_role *role;
+-	unsigned int before = 0;
+-	unsigned int after = 0;
+ 	int ret;
+ 
+ 	if (copy_from_user(&request, arg, sizeof(request)))
+@@ -216,25 +247,8 @@
+ 	ctx->active++;
+ 	mutex_unlock(&ctx->guard);
+ 
+-	/* Synchronous in the ioctl caller: no worker/kthread changes KCOV owner. */
+-	if (request.mode == KCONC_REGMAP_MODE_SPLIT) {
+-		ret = regmap_read(ctx->map, request.reg, &before);
+-		role->before = before;
+-		if (!ret)
+-			ret = kconc_regmap_checkpoint(role, request.epoch);
+-		if (!ret) {
+-			after = (before & ~request.mask) | (request.value & request.mask);
+-			ret = regmap_write(ctx->map, request.reg, after);
+-		}
+-		role->after = after;
+-		role->values_valid = !ret;
+-	} else {
+-		/* No extra reads: the API does not export its locked before/after. */
+-		ret = kconc_regmap_checkpoint(role, request.epoch);
+-		if (!ret)
+-			ret = regmap_update_bits(ctx->map, request.reg,
+-					 request.mask, request.value);
+-	}
++	/* The same real body is exercised by the KUnit functional suite. */
++	ret = kconc_execute_operation(ctx, role, &request);
+ 
+ 	mutex_lock(&ctx->guard);
+ 	role->status = ret;
+@@ -339,6 +353,7 @@
+ 	if (!ctx)
+ 		return -ENOMEM;
+ 	mutex_init(&ctx->guard);
++	mutex_init(&ctx->update_guard);
+ 	ctx->state = KCONC_REGMAP_EMPTY;
+ 	file->private_data = ctx;
+ 	return nonseekable_open(inode, file);
+@@ -353,6 +368,8 @@
+ 	WARN_ON_ONCE(ctx->active);
+ 	kconc_destroy_map(ctx);
+ 	mutex_unlock(&ctx->guard);
++	mutex_destroy(&ctx->update_guard);
++	mutex_destroy(&ctx->guard);
+ 	kfree(ctx);
+ 	return 0;
+ }
+@@ -386,3 +403,7 @@
+ 
+ MODULE_DESCRIPTION("Kconc synchronous regmap lifecycle test entry");
+ MODULE_LICENSE("GPL");
++
++#if IS_ENABLED(CONFIG_KCONC_REGMAP_KUNIT_TEST)
++#include "kconc-regmap-kunit.h"
++#endif
+--- /dev/null
++++ b/drivers/base/regmap/kconc-regmap-kunit.h
+@@ -0,0 +1,137 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Included in the repaired entry's TU to test its actual private operation body. */
++#include <kunit/test.h>
++
++struct kconc_kunit_input {
++	u32 initial[4];
++	u32 reg[2], mask[2], value[2];
++	u32 expected[2][4]; /* exact serial A-B, then B-A results */
++};
++
++static const struct kconc_kunit_input kconc_inputs[] = {
++	{ { 0, 0, 0, 0 }, { 0, 0 }, { 1, 2 }, { 1, 2 },
++	  { { 3, 0, 0, 0 }, { 3, 0, 0, 0 } } },
++	{ { 0, 0, 0, 0 }, { 0, 0 }, { 3, 3 }, { 1, 2 },
++	  { { 2, 0, 0, 0 }, { 1, 0, 0, 0 } } },
++	{ { 0, 0, 0, 0 }, { 0, 1 }, { 1, 2 }, { 1, 2 },
++	  { { 1, 2, 0, 0 }, { 1, 2, 0, 0 } } },
++	{ { 0, 0, 0, 0 }, { 0, 0 }, { 0, 2 }, { 0, 2 },
++	  { { 2, 0, 0, 0 }, { 2, 0, 0, 0 } } },
++	{ { 0xa5a55a5aU, 17, 34, 51 }, { 0, 0 },
++	  { 0x80000000U, 0x40000000U }, { 0, 0x40000000U },
++	  { { 0x65a55a5aU, 17, 34, 51 }, { 0x65a55a5aU, 17, 34, 51 } } },
++};
++
++static int kconc_kunit_init(struct kunit *test)
++{
++	struct kconc_regmap_context *ctx;
++	int ret;
++
++	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	mutex_init(&ctx->guard);
++	mutex_init(&ctx->update_guard);
++	ret = kconc_create_map(ctx);
++	if (ret) {
++		mutex_destroy(&ctx->update_guard);
++		mutex_destroy(&ctx->guard);
++		return ret;
++	}
++	ctx->epoch = 1;
++	test->priv = ctx;
++	return 0;
++}
++
++static void kconc_kunit_exit(struct kunit *test)
++{
++	struct kconc_regmap_context *ctx = test->priv;
++
++	kconc_destroy_map(ctx);
++	mutex_destroy(&ctx->update_guard);
++	mutex_destroy(&ctx->guard);
++}
++
++static void kconc_kunit_round(struct kunit *test, unsigned int case_id,
++			      unsigned int reverse, unsigned int mode_a,
++			      unsigned int mode_b)
++{
++	struct kconc_regmap_context *ctx = test->priv;
++	const struct kconc_kunit_input *input = &kconc_inputs[case_id];
++	unsigned int i, value;
++
++	memset(ctx->roles, 0, sizeof(ctx->roles));
++	for (i = 0; i < 4; i++)
++		KUNIT_ASSERT_EQ(test, regmap_write(ctx->map, i, input->initial[i]), 0);
++	for (i = 0; i < 2; i++) {
++		unsigned int role_id = i ^ reverse;
++		struct kconc_regmap_role *role = &ctx->roles[role_id];
++		struct kconc_regmap_op request = {
++			.abi = KCONC_REGMAP_ABI, .epoch = ctx->epoch, .role = role_id,
++			.reg = input->reg[role_id], .mask = input->mask[role_id],
++			.value = input->value[role_id], .mode = role_id ? mode_b : mode_a,
++		};
++
++		KUNIT_ASSERT_EQ(test, regmap_read(ctx->map, request.reg, &value), 0);
++		KUNIT_ASSERT_EQ(test, kconc_execute_operation(ctx, role, &request), 0);
++		KUNIT_EXPECT_EQ(test, role->checkpoint, ctx->epoch);
++		KUNIT_EXPECT_EQ(test, role->pid, (u32)task_pid_nr(current));
++		KUNIT_EXPECT_EQ(test, role->preempt_count, 0U);
++		KUNIT_EXPECT_EQ(test, role->irqs_disabled, 0U);
++		KUNIT_EXPECT_FALSE(test, mutex_is_locked(&ctx->update_guard));
++		if (request.mode == KCONC_REGMAP_MODE_SPLIT) {
++			KUNIT_EXPECT_EQ(test, role->before, value);
++			KUNIT_EXPECT_EQ(test, role->after,
++				(value & ~request.mask) | (request.value & request.mask));
++			KUNIT_EXPECT_EQ(test, role->values_valid, 1U);
++		} else {
++			KUNIT_EXPECT_EQ(test, role->before, 0U);
++			KUNIT_EXPECT_EQ(test, role->after, 0U);
++			KUNIT_EXPECT_EQ(test, role->values_valid, 0U);
++		}
++	}
++	for (i = 0; i < 4; i++) {
++		KUNIT_ASSERT_EQ(test, regmap_read(ctx->map, i, &value), 0);
++		KUNIT_EXPECT_EQ(test, value, input->expected[reverse][i]);
++	}
++}
++
++static void kconc_kunit_case(struct kunit *test, unsigned int case_id)
++{
++	unsigned int reverse, mode;
++
++	for (reverse = 0; reverse < 2; reverse++)
++		for (mode = 0; mode < 2; mode++)
++			kconc_kunit_round(test, case_id, reverse, mode, mode);
++}
++
++static void kconc_kunit_disjoint(struct kunit *test) { kconc_kunit_case(test, 0); }
++static void kconc_kunit_overlap(struct kunit *test) { kconc_kunit_case(test, 1); }
++static void kconc_kunit_registers(struct kunit *test) { kconc_kunit_case(test, 2); }
++static void kconc_kunit_zero_mask(struct kunit *test) { kconc_kunit_case(test, 3); }
++static void kconc_kunit_high_bits(struct kunit *test) { kconc_kunit_case(test, 4); }
++static void kconc_kunit_mixed_modes(struct kunit *test)
++{
++	unsigned int reverse, mode;
++
++	for (reverse = 0; reverse < 2; reverse++)
++		for (mode = 0; mode < 2; mode++)
++			kconc_kunit_round(test, 1, reverse, mode, mode ^ 1);
++}
++
++static struct kunit_case kconc_kunit_cases[] = {
++	KUNIT_CASE(kconc_kunit_disjoint),
++	KUNIT_CASE(kconc_kunit_overlap),
++	KUNIT_CASE(kconc_kunit_registers),
++	KUNIT_CASE(kconc_kunit_zero_mask),
++	KUNIT_CASE(kconc_kunit_high_bits),
++	KUNIT_CASE(kconc_kunit_mixed_modes),
++	{}
++};
++static struct kunit_suite kconc_kunit_suite = {
++	.name = "kconc-k11-rmw",
++	.init = kconc_kunit_init,
++	.exit = kconc_kunit_exit,
++	.test_cases = kconc_kunit_cases,
++};
++kunit_test_suite(kconc_kunit_suite);
+--- a/drivers/base/regmap/Kconfig
++++ b/drivers/base/regmap/Kconfig
+@@ -7,3 +7,11 @@
+ 	  Operations call the real regmap core and its upstream RAM testing bus
+ 	  synchronously in the calling task. This is an experimental interface,
+ 	  not a hardware driver or a production userspace regmap ABI.
++
++config KCONC_REGMAP_KUNIT_TEST
++	bool "Kconc fixed-entry functional KUnit regressions"
++	depends on KCONC_REGMAP_TEST && KUNIT=y
++	help
++	  Exercise the same operation body as the synchronous ioctl over the
++	  real regmap RAM backend. These functional tests do not replace
++	  controlled concurrency regression or validate user-copy handling.

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "operation": "optimize.bma400",
+  "inputs": {
+    "kernel_tree": "../inputs/linux",
+    "config": "../inputs/kernel.config",
+    "clang": "../toolchains/llvm/bin/clang",
+    "compcert": "../toolchains/CompCert-3.13",
+    "coq_bin": "../toolchains/coq/bin"
+  }
+}

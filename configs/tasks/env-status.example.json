@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "name": "inspect-existing-vm",
+  "operation": "env.status",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k03",
+    "ssh_port": 2224
+  },
+  "inputs": {}
+}

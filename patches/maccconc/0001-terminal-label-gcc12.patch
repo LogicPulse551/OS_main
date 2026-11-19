@@ -1,0 +1,22 @@
+--- a/kcov-terminal.cpp
++++ b/kcov-terminal.cpp
+@@ -45,7 +45,6 @@
+ #include <algorithm>
+ #include <vector>
+ #include <memory>
+-#include <format>
+ #include <string>
+ #include <unordered_set>
+ #include <unordered_map>
+@@ -75,7 +74,10 @@
+ public:
+   std::unordered_map<std::string, AccessInfo> map;
+   std::string add(AccessInfo ai) {
+-    std::string label = ai.thread->prefix + std::format("{:04}", ai.thread->cur_idx++);
++    // Preserve the decimal, minimum-width-four label on libstdc++ 12.
++    std::string index = std::to_string(ai.thread->cur_idx++);
++    std::string label = ai.thread->prefix +
++        std::string(index.size() < 4 ? 4 - index.size() : 0, '0') + index;
+     map[label] = std::move(ai);
+     return label;
+   }

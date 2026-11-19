@@ -1,0 +1,312 @@
+--- a/runner-common.h
++++ b/runner-common.h
+@@ -1,277 +1,308 @@
+ /*
+  * Copyright 2026 Google LLC
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+  * you may not use this file except in compliance with the License.
+  * You may obtain a copy of the License at
+  *
+  *     https://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+ 
+ #include <pthread.h>
+ #include <errno.h>
+ #include <dlfcn.h>
+ #include <err.h>
+ #include <fcntl.h>
+ #include <sched.h>
+ #include <stddef.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
+ #include <sys/wait.h>
+ #include <sys/syscall.h>
+ #include "third_party/kcov.h"
+ 
+ static void (*test_setup)(void);
+ static void (*test_thread1)(void);
+ static void (*test_thread2)(void);
+ static void (*test_end)(void);
+ 
+ // K08 physical execution slots select original logical callbacks. The original
+ // test_thread1 (role A/0) and test_thread2 (role B/1) identities never change.
+ static unsigned int k08_slot_to_role[2] = {0, 1};
+ static const char *k08_baseline_order = "ab";
+ static void k08_run_slot(unsigned int slot) {
+   if (k08_slot_to_role[slot] == 0) test_thread1();
+   else test_thread2();
+ }
+ 
+ static void pin_to(int cpu) {
+   cpu_set_t cset;
+   CPU_ZERO(&cset);
+   CPU_SET(cpu, &cset);
+   if (sched_setaffinity(0, sizeof(cpu_set_t), &cset))
+     err(1, "set affinity");
+ }
+ 
+ static void (*dlsym_checked(void *handle, const char *symbol))(void) {
+   void *res = dlsym(handle, symbol);
+   if (res)
+     return (void(*)(void))res;
+   errx(1, "unable to lookup symbol '%s': %s", symbol, dlerror());
+ }
+ 
+ static void load_testcase_dlsyms(const char *shlib_path) {
+   void *rtld_handle = dlopen(shlib_path, RTLD_NOW|RTLD_LOCAL|RTLD_NODELETE);
+   if (rtld_handle == NULL)
+     errx(1, "unable to dlopen('%s'): %s", shlib_path, dlerror());
+   test_setup = dlsym_checked(rtld_handle, "test_setup");
+   test_thread1 = dlsym_checked(rtld_handle, "test_thread1");
+   test_thread2 = dlsym_checked(rtld_handle, "test_thread2");
+   test_end = dlsym_checked(rtld_handle, "test_end");
+ }
+ 
+ static struct kcov_inst {
+   int fd;
+   unsigned long *cover;
+   unsigned long cover_n;
+ 
+   // only for kcov-vsock-client
+   struct kcov_di_stack *distacks;
+   struct kcov_set_di_arg di_arg;
+ } *kcov_insts;
+ 
+ #define COVER_SIZE                  (16 << 20/*MiB*/)
+ 
+ #ifdef K03_EVIDENCE
+ struct K03Control {
+   int child_status, waitpid_result;
+   int gate_called, gate_rc, gate_errno;
+   int b_wake_called, b_wake_rc, b_wake_errno;
+   int a_wake_called, a_wake_rc, a_wake_errno;
+   int reset_called, reset_rc, reset_errno;
+   int a_done, b_done;
+   pid_t k08_slot_tids[2];
++  unsigned int k10_a_ready;
+ };
+ static bool k03_enabled = false;
+ static K03Control *k03_control = nullptr;
+ static const char *k03_child_stdout_path = nullptr;
+ static const char *k03_child_stderr_path = nullptr;
++
++// A finite user-space readiness wait preserves the existing traced syscall
++// order. It does not consume the kernel's separate injection spin budget.
++static bool k10_wait_a_ready(unsigned long remaining = 100000000UL) {
++  while (remaining--) {
++    if (__atomic_load_n(&k03_control->k10_a_ready, __ATOMIC_ACQUIRE))
++      return true;
++    __asm__ __volatile__("pause" ::: "memory");
++  }
++  return false;
++}
+ #endif
+ 
+ static void kcov_alloc_multi(int num_kcov_insts) {
+ #ifdef K03_EVIDENCE
+   if (k03_enabled)
+     k03_control = (K03Control*)SYSCHK(mmap(NULL, sizeof(K03Control), PROT_READ|PROT_WRITE,
+         MAP_SHARED|MAP_ANONYMOUS, -1, 0));
+ #endif
+   kcov_insts = (struct kcov_inst*)SYSCHK(mmap(NULL, sizeof(*kcov_insts)*num_kcov_insts, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0));
+   for (int i=0; i<num_kcov_insts; i++) {
+     kcov_insts[i].fd = SYSCHK(open("/sys/kernel/debug/kcov", O_RDWR));
+     SYSCHK(ioctl(kcov_insts[i].fd, KCOV_INIT_TRACE, COVER_SIZE));
+     kcov_insts[i].cover = (unsigned long *)SYSCHK(mmap(NULL, COVER_SIZE * sizeof(unsigned long),
+             PROT_READ | PROT_WRITE, MAP_SHARED, kcov_insts[i].fd, 0));
+   }
+ }
+ 
+ static pthread_barrier_t rtic_init_barrier, rtic_finish_barrier;
+ static void *rtic_thread_fn(void *inner_) {
+   bool inner = *(bool*)inner_;
+   pin_to(1);
+   SYSCHK(ioctl(kcov_insts[1].fd, KCOV_ENABLE, 3/*KCOV_TRACE_MEMORY_ACCESS*/));
+   pthread_barrier_wait(&rtic_init_barrier);
++#ifdef K03_EVIDENCE
++  if (k03_enabled && !k10_wait_a_ready()) {
++    // The gate was never called. Keep its default fields and preserve an
++    // explicit child failure rather than executing an uncontrolled callback.
++    static const char message[] = "K10: slot A readiness budget exhausted\n";
++    (void)write(STDERR_FILENO, message, sizeof(message) - 1);
++    _exit(125);
++  }
++#endif
+   if (inner) {
+ #ifdef K03_EVIDENCE
+     if (k03_enabled) k03_control->gate_called = 1;
+     int gate_rc = ioctl(kcov_insts[0].fd, KCOV_SPINWAIT_DI_FLAG, 0);
+     if (k03_enabled) {
+       k03_control->gate_rc = gate_rc;
+       k03_control->gate_errno = gate_rc < 0 ? errno : 0;
++    }
++    if (gate_rc < 0) {
++      // Exit the entire child process; waiting at the finish barrier could
++      // deadlock with the peer. The parent still exports shared gate/status.
++      static const char message[] = "K10: gate failure; callback not executed\n";
++      (void)write(STDERR_FILENO, message, sizeof(message) - 1);
++      _exit(125);
+     }
+ #else
+     ioctl(kcov_insts[0].fd, KCOV_SPINWAIT_DI_FLAG, 0);
+ #endif
+   }
+ 
+   if (k03_enabled) k03_control->k08_slot_tids[1] = syscall(SYS_gettid);
+   __atomic_store_n(&kcov_insts[1].cover[0], 0, __ATOMIC_RELAXED);
+   // MEASUREMENT STARTS HERE
+   k08_run_slot(1);
+   // MEASUREMENT ENDS HERE
+   kcov_insts[1].cover_n = __atomic_load_n(&kcov_insts[1].cover[0], __ATOMIC_RELAXED);
+ #ifdef K03_EVIDENCE
+   if (k03_enabled) k03_control->b_done = 1;
+ #endif
+   if (inner) {
+ #ifdef K03_EVIDENCE
+     if (k03_enabled) k03_control->b_wake_called = 1;
+     int wake_rc = ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 1);
+     if (k03_enabled) {
+       k03_control->b_wake_rc = wake_rc;
+       k03_control->b_wake_errno = wake_rc < 0 ? errno : 0;
+     }
+     SYSCHK(wake_rc);
+ #else
+     SYSCHK(ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 1));
+ #endif
+   }
+ 
+   pthread_barrier_wait(&rtic_finish_barrier);
+   return NULL;
+ }
+ static unsigned long SPIN_LIMIT = 1000000;
+ static void run_testcase_in_child(bool sequential, bool t2_is_inner) {
+ #ifdef K03_EVIDENCE
+   if (k03_enabled) {
+     memset(k03_control, 0, sizeof(*k03_control));
+     k03_control->child_status = -1;
+     k03_control->gate_rc = k03_control->a_wake_rc = k03_control->b_wake_rc = k03_control->reset_rc = -999;
+     kcov_insts[0].cover_n = kcov_insts[1].cover_n = 0;
+     fflush(NULL);
+   }
+ #endif
+   pid_t child = SYSCHK(fork());
+   if (child != 0) {
+     int wstatus;
+     int waited = SYSCHK(waitpid(child, &wstatus, 0));
+ #ifdef K03_EVIDENCE
+     if (k03_enabled) {
+       k03_control->child_status = wstatus;
+       k03_control->waitpid_result = waited;
+     }
+ #endif
+     return;
+   }
+ 
+ #ifdef K03_EVIDENCE
+   if (k03_enabled) {
+     if (!freopen(k03_child_stdout_path, "wx", stdout)) err(1, "K03 child stdout");
+     if (!freopen(k03_child_stderr_path, "wx", stderr)) err(1, "K03 child stderr");
+   }
+ #endif
+   if (pthread_barrier_init(&rtic_init_barrier, NULL, 2))
+     errx(1, "pthread_barrier_init");
+   if (pthread_barrier_init(&rtic_finish_barrier, NULL, 2))
+     errx(1, "pthread_barrier_init");
+   test_setup();
+   pthread_t thread;
+   if (pthread_create(&thread, NULL, rtic_thread_fn, &t2_is_inner))
+     errx(1, "pthread_create");
+ 
+   pin_to(0);
+ 
+   pthread_barrier_wait(&rtic_init_barrier);
+ 
+   // should be the last syscall before we start
+   SYSCHK(ioctl(kcov_insts[0].fd, KCOV_ENABLE, KCOV_TRACE_MEMORY_ACCESS));
+ 
+-  if (k03_enabled) k03_control->k08_slot_tids[0] = syscall(SYS_gettid);
++  if (k03_enabled) {
++    k03_control->k08_slot_tids[0] = syscall(SYS_gettid);
++    __atomic_store_n(&k03_control->k10_a_ready, 1U, __ATOMIC_RELEASE);
++  }
+   __atomic_store_n(&kcov_insts[0].cover[0], 0, __ATOMIC_RELAXED);
+   // MEASUREMENT STARTS HERE
+   k08_run_slot(0);
+   // MEASUREMENT ENDS HERE
+   kcov_insts[0].cover_n = __atomic_load_n(&kcov_insts[0].cover[0], __ATOMIC_RELAXED);
+ #ifdef K03_EVIDENCE
+   if (k03_enabled) k03_control->a_done = 1;
+ #endif
+   if (sequential) {
+ #ifdef K03_EVIDENCE
+     if (k03_enabled) k03_control->a_wake_called = 1;
+     int wake_rc = ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 0);
+     if (k03_enabled) {
+       k03_control->a_wake_rc = wake_rc;
+       k03_control->a_wake_errno = wake_rc < 0 ? errno : 0;
+     }
+     SYSCHK(wake_rc);
+ #else
+     SYSCHK(ioctl(kcov_insts[0].fd, KCOV_WAKE_DI_FLAG, 0));
+ #endif
+   }
+ 
+   pthread_barrier_wait(&rtic_finish_barrier);
+   if (pthread_join(thread, NULL))
+     errx(1, "pthread_join");
+ #ifdef K03_EVIDENCE
+   if (k03_enabled) k03_control->reset_called = 1;
+   int reset_rc = ioctl(kcov_insts[0].fd, KCOV_RESET_DI_FLAGS, 0);
+   if (k03_enabled) {
+     k03_control->reset_rc = reset_rc;
+     k03_control->reset_errno = reset_rc < 0 ? errno : 0;
+   }
+   SYSCHK(reset_rc);
+ #else
+   SYSCHK(ioctl(kcov_insts[0].fd, KCOV_RESET_DI_FLAGS, 0));
+ #endif
+   test_end();
+   exit(0);
+ }
+ 
+ #ifdef __cplusplus
+ struct DIStack {
+   std::vector<struct kcov_di_stack_elem> elems;
+   enum di_stack_type type;
+   unsigned int flagidx;
+   struct kcov_di_stack to_uapi() {
+     return (struct kcov_di_stack) {
+       .elems = (uintptr_t)elems.data(),
+       .num_elems = (unsigned int)elems.size(),
+       .type = type,
+       .flagidx = flagidx
+     };
+   }
+ };
+ 
+ void prep_di(size_t thread_idx, std::vector<DIStack> &di_stacks_vec, int sync_bits_fd) {
+   std::vector<struct kcov_di_stack> uapi_stacks;
+   std::vector<DIStack> di_stack_vec_(di_stacks_vec);
+   std::sort(di_stack_vec_.begin(), di_stack_vec_.end(), [](DIStack& a, DIStack& b) {
+     return a.type != DI_STACK_WAKE_POST && b.type == DI_STACK_WAKE_POST;
+   });
+   for (DIStack& di_stack : di_stack_vec_)
+     uapi_stacks.push_back(di_stack.to_uapi());
+   struct kcov_set_di_arg di_arg = {
+     .stacks = (uintptr_t)uapi_stacks.data(),
+     .num_stacks = (unsigned int)uapi_stacks.size(),
+     .sync_bits_fd = sync_bits_fd,
+     .spin_limit = SPIN_LIMIT
+   };
+   SYSCHK(ioctl(kcov_insts[thread_idx].fd, KCOV_SET_DI, &di_arg));
+ }
+ #endif

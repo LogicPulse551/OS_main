@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "operation": "kernel.reduce",
+  "runtime": {
+    "lab_dir": "/home/xzf/os-concurrency-k13-mutex",
+    "ssh_port": 2254,
+    "build_lab": "/home/xzf/os-concurrency-lab",
+    "kernel_build": "/home/xzf/os-concurrency-lab/build/linux-k07-k10-control-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "sample_guest_build": "/home/lab/k08/build-01",
+    "search_guest_build": "/home/lab/k10-control/build-01",
+    "probe_guest_build": "/home/lab/k02/build-vsock-cid-fix"
+  },
+  "inputs": {
+    "bundle": "/path/to/original/bundle",
+    "source_mapper": "/home/xzf/os-concurrency-lab/build/maccconc-gui-c17ba2d/helpers/20261107T091940.145850Z/source-map"
+  },
+  "scenario": {
+    "max_trials": 4,
+    "replay_repetitions": 2
+  }
+}

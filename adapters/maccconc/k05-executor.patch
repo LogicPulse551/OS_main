@@ -1,0 +1,35 @@
+--- a/kcov-autorace.cpp
++++ b/kcov-autorace.cpp
+@@ -52,13 +52,14 @@
+ 
+ int main(int argc, char **argv) {
+   bool record_mode = argc == 4 && strcmp(argv[2], "--k03-record") == 0;
++  bool baseline_mode = argc == 4 && strcmp(argv[2], "--k05-baseline") == 0;
+   bool replay_mode = argc == 5 && strcmp(argv[2], "--k03-replay") == 0;
+-  if (argc != 2 && !record_mode && !replay_mode)
+-    errx(1, "invocation: %s <path to test .so> [--k03-record NEW_DIR | --k03-replay PLAN NEW_DIR]", argv[0]);
+-  k03_enabled = record_mode || replay_mode;
++  if (argc != 2 && !record_mode && !baseline_mode && !replay_mode)
++    errx(1, "invocation: %s <path to test .so> [--k03-record NEW_DIR | --k05-baseline NEW_DIR | --k03-replay PLAN NEW_DIR]", argv[0]);
++  k03_enabled = record_mode || baseline_mode || replay_mode;
+   k03::Stack replay_stack;
+   k03::fs::path output;
+-  if (record_mode) { output = argv[3]; k03::new_directory(output); }
++  if (record_mode || baseline_mode) { output = argv[3]; k03::new_directory(output); }
+   if (replay_mode) { replay_stack = k03::load_plan(argv[3]); output = argv[4]; }
+   fprintf(stderr, "loading kallsyms\n");
+   kallsyms_load();
+@@ -77,10 +78,11 @@
+   }
+ 
+   fprintf(stderr, "collecting A-B coverage\n");
+-  if (record_mode) k03::prepare_output(output/"baseline", nullptr);
++  if (record_mode || baseline_mode) k03::prepare_output(output/"baseline", nullptr);
+   prep_di_for_aba_test(nullptr);
+   run_testcase_in_child(true, true);
+-  if (record_mode && !k03::save_run(true, nullptr, false)) return 2;
++  if ((record_mode || baseline_mode) && !k03::save_run(true, nullptr, false)) return 2;
++  if (baseline_mode) return 0;
+ 
+   KcovTraceSet ts;
+   ts.traces.push_back(KcovTrace(0));

@@ -1,0 +1,66 @@
+--- a/kcov-autorace.cpp
++++ b/kcov-autorace.cpp
+@@ -50,29 +50,29 @@
+ 
+ #include "k03-evidence.h"
+ 
+-// K08 is deliberately a sampling-only binary. It cannot enumerate or execute
+-// arbitrary conflict points inside regmap locks. Candidate execution is K09.
++// K09 executes one supplied physical-slot A plan. The host validates that
++// it is the declared regmap marker before launch; no conflict enumeration here.
+ int main(int argc, char **argv) {
+-  if (argc != 5 || strcmp(argv[2], "--k08-baseline") != 0 ||
++  if (argc != 6 || strcmp(argv[2], "--k09-execute") != 0 ||
+       (strcmp(argv[3], "ab") != 0 && strcmp(argv[3], "ba") != 0))
+-    errx(1, "invocation: %s <path to test .so> --k08-baseline ab|ba NEW_DIR", argv[0]);
++    errx(1, "invocation: %s <path to test .so> --k09-execute ab|ba PLAN NEW_DIR", argv[0]);
+   k08_baseline_order = argv[3];
+   if (strcmp(k08_baseline_order, "ba") == 0) {
+     k08_slot_to_role[0] = 1;
+     k08_slot_to_role[1] = 0;
+   }
+   k03_enabled = true;
+-  k03::fs::path output = argv[4];
+-  k03::new_directory(output);
++  k03::Stack target = k03::load_plan(argv[4]);
++  k03::fs::path output = argv[5];
+   fprintf(stderr, "loading kallsyms\n");
+   kallsyms_load();
+   fprintf(stderr, "loading original logical testcase callbacks\n");
+   load_testcase_dlsyms(argv[1]);
+   fprintf(stderr, "initializing kcov\n");
+   kcov_alloc_multi(NUM_KCOV_INSTS);
+-  fprintf(stderr, "collecting logical %s coverage; raw slots remain A then B\n", k08_baseline_order);
+-  k03::prepare_output(output/"baseline", nullptr);
+-  prep_di_for_aba_test(nullptr);
+-  run_testcase_in_child(true, true);
+-  return k03::save_run(true, nullptr, false) ? 0 : 2;
++  fprintf(stderr, "executing supplied logical %s candidate; controlled raw slot remains A\n", k08_baseline_order);
++  k03::prepare_output(output, &target);
++  prep_di_for_aba_test(&target);
++  run_testcase_in_child(false, true);
++  return k03::save_run(false, &target, true) ? 0 : 2;
+ }
+--- a/k03-evidence.h
++++ b/k03-evidence.h
+@@ -192,7 +192,9 @@
+   FILE *file=new_file(run_directory/"run.json");
+   fprintf(file,"{\"schema_version\":1,\"k08_schema_version\":1,"
+                "\"baseline_order\":\"%s\",\"raw_trace_namespace\":\"execution_slot\","
+-               "\"sampling_only\":true,\"automatic_candidates_executed\":0,"
++               "\"k09_schema_version\":1,\"sampling_only\":false,\"automatic_candidates_executed\":0,"
++               "\"candidate_execution_requested\":true,\"requested_candidate_executions\":1,"
++               "\"candidate_pattern\":\"%c-%c-%c\","
+                "\"slot_to_logical_role\":{\"A\":\"%c\",\"B\":\"%c\"},"
+                "\"slot_tids\":{\"A\":%d,\"B\":%d},"
+                "\"logical_role_to_callback\":{\"A\":\"test_thread1\",\"B\":\"test_thread2\"},"
+@@ -206,7 +208,8 @@
+                "\"buffer_words\":%u,\"A_words\":%lu,\"B_words\":%lu,"
+                "\"overflow\":%s,\"raw_words_well_formed\":%s,\"control_valid\":%s,"
+                "\"safe_to_continue\":%s,\"A\":",
+-          k08_baseline_order,'A'+k08_slot_to_role[0],'A'+k08_slot_to_role[1],
++          k08_baseline_order,'A'+k08_slot_to_role[0],'A'+k08_slot_to_role[1],'A'+k08_slot_to_role[0],
++          'A'+k08_slot_to_role[0],'A'+k08_slot_to_role[1],
+           (int)k03_control->k08_slot_tids[0],(int)k03_control->k08_slot_tids[1],
+           k08_slot_to_role[0]+1,k08_slot_to_role[1]+1,
+           sequential?"true":"false",loaded_from_file?"true":"false",SPIN_LIMIT,

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "read-historical-result-only",
+  "operation": "result.read",
+  "runtime": {},
+  "inputs": {
+    "result": "~/kconc-runs/replay-001/result.json"
+  }
+}

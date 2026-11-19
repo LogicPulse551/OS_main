@@ -1,0 +1,78 @@
+From: kconc competition project
+Subject: [K10] Bound each wait independently and exclude the active x86 IRQ stack
+
+Applies to Linux 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b with the
+existing K06 or K07 regmap entry. The underlying kernel file is GPL-2.0.
+
+The x86 IRQ-stack marker covers the observed __irq_exit_rcu timer/softirq
+tail after HARDIRQ_OFFSET has been subtracted. It does not establish that
+every architecture or every outer IRQ-return tail is covered. Preserve
+the existing explicit remote-softirq exception; ordinary task accesses,
+including those made with local IRQs disabled, remain observable.
+
+Each wait receives the configured finite spin count. gate0 must not consume
+the following injected WAIT's allowance, and two waiters must not perform
+racy read/modify/write operations on one shared countdown. This does not
+increase the configured limit, eliminate timeout, or promise CPU progress.
+
+--- a/kernel/kcov.c
++++ b/kernel/kcov.c
+@@ -26,6 +26,9 @@
+ #include <linux/refcount.h>
+ #include <linux/log2.h>
+ #include <asm/setup.h>
++#ifdef CONFIG_X86_64
++#include <asm/processor.h>
++#endif
+ 
+ #define kcov_debug(fmt, ...) pr_debug("%s: " fmt, __func__, ##__VA_ARGS__)
+ 
+@@ -209,19 +212,30 @@
+ static notrace bool check_kcov_context(struct task_struct *t)
+ {
+ 	/*
+ 	 * We are interested in code coverage as a function of a syscall inputs,
+ 	 * so we ignore code executed in interrupts, unless we are in a remote
+ 	 * coverage collection section in a softirq.
+ 	 */
+ 	if (!in_task() && !(in_softirq_really() && t->kcov_softirq))
+ 		return false;
++#ifdef CONFIG_X86_64
++	/*
++	 * __irq_exit_rcu() drops HARDIRQ_OFFSET before its timer/softirq
++	 * tail. in_task() alone then admits that IRQ-stack activity into
++	 * the interrupted task's trace. Keep the original remote-softirq
++	 * exception. This marker does not cover all outer IRQ-return tails.
++	 */
++	if (raw_cpu_read(hardirq_stack_inuse) &&
++	    !(in_softirq_really() && t->kcov_softirq))
++		return false;
++#endif
+ 	/*
+ 	 * There is some code that runs in interrupts but for which
+ 	 * in_interrupt() returns false (e.g. preempt_schedule_irq()).
+ 	 * READ_ONCE()/barrier() effectively provides load-acquire wrt
+ 	 * interrupts, there are paired barrier()/WRITE_ONCE() in
+ 	 * kcov_start().
+ 	 */
+ 	barrier();
+ 	return true;
+ }
+@@ -1098,12 +1112,13 @@
+ static int notrace __kcov_spin_wait(struct kcov *kcov, unsigned int flagidx)
+ {
++	/* A bounded allowance per wait, never a shared mutable countdown. */
++	u64 remaining = READ_ONCE(kcov->di.spin_limit);
++
+ 	while (!test_bit(flagidx, kcov->di.syncbits_owner->di.sync_bits)) {
+-		u64 spin_limit = READ_ONCE(kcov->di.spin_limit);
+-
+-		if (spin_limit == 0) /* spin timeout */
++		if (remaining == 0) /* spin timeout */
+ 			return -ETIMEDOUT;
+-		WRITE_ONCE(kcov->di.spin_limit, spin_limit - 1);
++		remaining--;
+ 		cpu_relax();
+ 	}
+ 	return 0;
+ }

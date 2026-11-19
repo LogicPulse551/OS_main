@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "operation": "artifact.loaded",
+  "runtime": {"lab_dir": "/home/xzf/os-concurrency-i01-performance-01", "ssh_port": 2362},
+  "inputs": {"identity": "./original-performance.json"}
+}

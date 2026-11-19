@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "regression-status-mutex",
+  "operation": "regression.status",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k11-irqtail-mutex",
+    "ssh_port": 2250,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k07-k11-irqtail-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "sample_guest_build": "/home/lab/k11/build-03",
+    "search_guest_build": "/home/lab/k11/build-03",
+    "probe_guest_build": "/home/lab/k02/build-vsock-cid-fix"
+  }
+}

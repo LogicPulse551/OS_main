@@ -1,0 +1,45 @@
+# Required by the pinned MAccConc README; merge into the pinned kernel's config.
+CONFIG_SMP=y
+CONFIG_NR_CPUS=4
+CONFIG_KASAN=y
+CONFIG_KASAN_OUTLINE=y
+CONFIG_KCOV=y
+CONFIG_KCOV_EXT_RECORDS=y
+CONFIG_KCOV_MEMORY=y
+CONFIG_KALLSYMS_ALL=y
+CONFIG_DEBUG_INFO_DWARF5=y
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_PREEMPT=y
+# CONFIG_RANDOMIZE_BASE is not set
+CONFIG_TMPFS=y
+
+# The pinned Clang rejects parameter references in blk_holder_ops' function
+# pointer release_capability annotations. Disable only this optional static
+# warning pass; retain the required KCOV/KASAN runtime instrumentation.
+# CONFIG_WARN_CONTEXT_ANALYSIS is not set
+
+# Guest root disk, serial console and SSH transport for this QEMU lab.
+CONFIG_DEBUG_FS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_NET=y
+CONFIG_EXT4_FS=y
+CONFIG_MSDOS_PARTITION=y
+CONFIG_VFAT_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# Build the real first target into vmlinux without enabling the KUnit test suite.
+CONFIG_KUNIT=y
+# CONFIG_KUNIT_ALL_TESTS is not set
+CONFIG_REGMAP_BUILD=y
+CONFIG_REGMAP=y
+
+# The optional slow RCU-strict mode is intentionally not enabled here.

@@ -1,0 +1,260 @@
+{
+  "schema": 1,
+  "command_parameters": {
+    "calls": 1,
+    "samples": 1,
+    "warmups": 0
+  },
+  "expected_checks": [
+    {
+      "bits": 8,
+      "fail_at": 0,
+      "rc": 0,
+      "transfers": 3,
+      "wire": "848688",
+      "lengths": "020202",
+      "data": "123456789abc",
+      "converter": "regmap_parse_inplace_noop",
+      "result": 0
+    },
+    {
+      "bits": 8,
+      "fail_at": 1,
+      "rc": -5,
+      "transfers": 1,
+      "wire": "840000",
+      "lengths": "020000",
+      "data": "cccccccccccc",
+      "converter": "regmap_parse_inplace_noop",
+      "result": 0
+    },
+    {
+      "bits": 8,
+      "fail_at": 2,
+      "rc": -110,
+      "transfers": 2,
+      "wire": "848600",
+      "lengths": "020200",
+      "data": "1234cccccccc",
+      "converter": "regmap_parse_inplace_noop",
+      "result": 0
+    },
+    {
+      "bits": 8,
+      "fail_at": 3,
+      "rc": -121,
+      "transfers": 3,
+      "wire": "848688",
+      "lengths": "020202",
+      "data": "12345678cccc",
+      "converter": "regmap_parse_inplace_noop",
+      "result": 0
+    },
+    {
+      "bits": 16,
+      "fail_at": 0,
+      "rc": 0,
+      "transfers": 3,
+      "wire": "848586",
+      "lengths": "020202",
+      "data": "34127856bc9a",
+      "converter": "regmap_parse_16_be_inplace",
+      "result": 0
+    },
+    {
+      "bits": 16,
+      "fail_at": 1,
+      "rc": -5,
+      "transfers": 1,
+      "wire": "840000",
+      "lengths": "020000",
+      "data": "cccccccccccc",
+      "converter": "regmap_parse_16_be_inplace",
+      "result": 0
+    },
+    {
+      "bits": 16,
+      "fail_at": 2,
+      "rc": -110,
+      "transfers": 2,
+      "wire": "848500",
+      "lengths": "020200",
+      "data": "1234cccccccc",
+      "converter": "regmap_parse_16_be_inplace",
+      "result": 0
+    },
+    {
+      "bits": 16,
+      "fail_at": 3,
+      "rc": -121,
+      "transfers": 3,
+      "wire": "848586",
+      "lengths": "020202",
+      "data": "12345678cccc",
+      "converter": "regmap_parse_16_be_inplace",
+      "result": 0
+    }
+  ],
+  "slots": [
+    {
+      "id": "reference-off",
+      "variant": "reference",
+      "mode": "off",
+      "maps": [],
+      "fixture": "absent",
+      "off_mode_omitted": true
+    },
+    {
+      "id": "reference-check",
+      "variant": "reference",
+      "mode": "check",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 9,
+          "path": "private",
+          "target_node": "absent"
+        },
+        {
+          "bits": 16,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "checks",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "reference-foreign",
+      "variant": "reference",
+      "mode": "foreign",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "present"
+        },
+        {
+          "bits": 16,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "present"
+        }
+      ],
+      "fixture": "checks",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "reference-observe",
+      "variant": "reference",
+      "mode": "observe",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 3,
+          "path": "public",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "single_bulk",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "reference-bench",
+      "variant": "reference",
+      "mode": "bench",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 3,
+          "path": "private",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "single_bulk",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "optimized-off",
+      "variant": "optimized",
+      "mode": "off",
+      "maps": [],
+      "fixture": "absent",
+      "off_mode_omitted": true
+    },
+    {
+      "id": "optimized-check",
+      "variant": "optimized",
+      "mode": "check",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 9,
+          "path": "private",
+          "target_node": "absent"
+        },
+        {
+          "bits": 16,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "checks",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "optimized-foreign",
+      "variant": "optimized",
+      "mode": "foreign",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "present"
+        },
+        {
+          "bits": 16,
+          "raw_starts": 9,
+          "path": "public",
+          "target_node": "present"
+        }
+      ],
+      "fixture": "checks",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "optimized-observe",
+      "variant": "optimized",
+      "mode": "observe",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 3,
+          "path": "public",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "single_bulk",
+      "off_mode_omitted": false
+    },
+    {
+      "id": "optimized-bench",
+      "variant": "optimized",
+      "mode": "bench",
+      "maps": [
+        {
+          "bits": 8,
+          "raw_starts": 3,
+          "path": "private",
+          "target_node": "absent"
+        }
+      ],
+      "fixture": "single_bulk",
+      "off_mode_omitted": false
+    }
+  ]
+}

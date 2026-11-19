@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k12-rmw",
+    "ssh_port": 2251,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k06-k11-irqtail-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "sample_guest_build": "/home/lab/k11/build-03",
+    "search_guest_build": "/home/lab/k11/build-03",
+    "probe_guest_build": "/home/lab/k02/build-vsock-cid-fix"
+  },
+  "name": "feedback-initialize-rmw",
+  "operation": "feedback.initialize"
+}

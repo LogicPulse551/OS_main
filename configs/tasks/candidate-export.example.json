@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "name": "candidate-export",
+  "operation": "candidate.export",
+  "inputs": {
+    "samples": "~/kconc-tasks/k08/samples.json"
+  }
+}

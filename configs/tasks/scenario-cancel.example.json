@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "cancel-the-observed-active-round",
+  "operation": "scenario.cancel",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k04",
+    "ssh_port": 2225
+  },
+  "inputs": {},
+  "scenario": {
+    "run_id": "00000000000000000000000000000000"
+  }
+}

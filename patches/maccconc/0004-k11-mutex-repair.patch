@@ -1,0 +1,371 @@
+From: Competition team
+Subject: [PATCH] K11 mutex caller repair and shared-body KUnit
+
+Base: Linux 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b plus accepted K10 family.
+Team-authored repair of the declared caller misuse, not an upstream regmap bug fix.
+The native request ABI and logical operation mode are unchanged.
+KUnit uses the pinned upstream framework; test bodies are team-authored GPL-2.0-only.
+
+--- a/drivers/base/regmap/kconc-regmap.c
++++ b/drivers/base/regmap/kconc-regmap.c
+@@ -4,9 +4,9 @@
+  * Base: Linux 2fc2e45b0cd75cd56f252a0872a6d039f46cc42b (MAccConc tree).
+  * The unmodified regmap-ram.c is Copyright (c) 2023 Arm Ltd, GPL-2.0.
+  * Team code below supplies lifecycle/ABI glue, not a replacement regmap.
+- * The nonblocking map-wide admission contract uses one shared mutex. PER_ROLE
+- * deliberately chooses different gates for the same contract. Real regmap
+- * updates retain their own correct locking; this is a caller lock-domain bug.
++ * K11 retains both logical request modes, but repairs the PER_ROLE caller
++ * misuse by admitting every operation through the same nonblocking mutex.
++ * Actual gate_id is always zero; no legacy private-gate observation is forged.
+  * This test device does not model physical hardware, IRQ or DMA behavior.
+  */
+ #include <linux/compat.h>
+@@ -265,14 +265,65 @@
+ 	return 0;
+ }
+ 
+-static long kconc_operation(struct kconc_regmap_context *ctx, void __user *arg)
+-{
+-	struct kconc_regmap_op request;
+-	struct kconc_regmap_role *role;
++/* Actual synchronous ioctl body, also called by the KUnit suite. */
++static int kconc_execute_operation(struct kconc_regmap_context *ctx,
++				   struct kconc_regmap_role *role,
++				   const struct kconc_regmap_op *request)
++{
+ 	struct mutex *gate;
+ 	bool entered = false;
+ 	int ret;
+ 	int exit_ret;
++
++	role->gate_id = 0;
++	role->pid = task_pid_nr(current);
++	role->preempt_count = preempt_count();
++	role->irqs_disabled = irqs_disabled();
++	/* Synchronous in the ioctl caller: no worker/kthread changes KCOV owner. */
++	gate = &ctx->shared_gate;
++	if (role->preempt_count || role->irqs_disabled) {
++		ret = -EPERM;
++		goto complete;
++	}
++	role->acquired = mutex_trylock(gate);
++	if (!role->acquired) {
++		ret = kconc_observe(ctx, request->role, KCONC_REGMAP_EVENT_BUSY);
++		if (!ret) {
++			role->outcome = KCONC_REGMAP_OUTCOME_BUSY;
++			ret = -EBUSY;
++		}
++		goto complete;
++	}
++	ret = kconc_observe(ctx, request->role, KCONC_REGMAP_EVENT_ENTER);
++	if (!ret) {
++		entered = true;
++		ret = kconc_regmap_checkpoint(role, request->epoch);
++	}
++	if (!ret) {
++		role->api_calls++;
++		ret = regmap_update_bits(ctx->map, request->reg,
++				 request->mask, request->value);
++	}
++	if (entered) {
++		exit_ret = kconc_observe(ctx, request->role, KCONC_REGMAP_EVENT_EXIT);
++		if (exit_ret)
++			ret = exit_ret;
++	}
++	/* The acquiring ioctl task always releases its own actual gate. */
++	mutex_unlock(gate);
++	role->released = 1;
++complete:
++	if (role->outcome != KCONC_REGMAP_OUTCOME_BUSY)
++		role->outcome = ret ? KCONC_REGMAP_OUTCOME_ERROR : KCONC_REGMAP_OUTCOME_SUCCESS;
++
++	return ret;
++}
++
++static long kconc_operation(struct kconc_regmap_context *ctx, void __user *arg)
++{
++	struct kconc_regmap_op request;
++	struct kconc_regmap_role *role;
++	int ret;
+ 
+ 	if (copy_from_user(&request, arg, sizeof(request)))
+ 		return -EFAULT;
+@@ -302,50 +353,10 @@
+ 	role->status = -EINPROGRESS;
+ 	role->reg = request.reg;
+ 	role->mode = request.mode;
+-	role->gate_id = request.mode == KCONC_REGMAP_MODE_SHARED ? 0 : request.role + 1;
+-	role->pid = task_pid_nr(current);
+-	role->preempt_count = preempt_count();
+-	role->irqs_disabled = irqs_disabled();
+ 	ctx->active++;
+ 	mutex_unlock(&ctx->guard);
+ 
+-	/* Synchronous in the ioctl caller: no worker/kthread changes KCOV owner. */
+-	gate = request.mode == KCONC_REGMAP_MODE_SHARED ?
+-		&ctx->shared_gate : &ctx->private_gate[request.role];
+-	if (role->preempt_count || role->irqs_disabled) {
+-		ret = -EPERM;
+-		goto complete;
+-	}
+-	role->acquired = mutex_trylock(gate);
+-	if (!role->acquired) {
+-		ret = kconc_observe(ctx, request.role, KCONC_REGMAP_EVENT_BUSY);
+-		if (!ret) {
+-			role->outcome = KCONC_REGMAP_OUTCOME_BUSY;
+-			ret = -EBUSY;
+-		}
+-		goto complete;
+-	}
+-	ret = kconc_observe(ctx, request.role, KCONC_REGMAP_EVENT_ENTER);
+-	if (!ret) {
+-		entered = true;
+-		ret = kconc_regmap_checkpoint(role, request.epoch);
+-	}
+-	if (!ret) {
+-		role->api_calls++;
+-		ret = regmap_update_bits(ctx->map, request.reg,
+-				 request.mask, request.value);
+-	}
+-	if (entered) {
+-		exit_ret = kconc_observe(ctx, request.role, KCONC_REGMAP_EVENT_EXIT);
+-		if (exit_ret)
+-			ret = exit_ret;
+-	}
+-	/* The acquiring ioctl task always releases its own actual gate. */
+-	mutex_unlock(gate);
+-	role->released = 1;
+-complete:
+-	if (role->outcome != KCONC_REGMAP_OUTCOME_BUSY)
+-		role->outcome = ret ? KCONC_REGMAP_OUTCOME_ERROR : KCONC_REGMAP_OUTCOME_SUCCESS;
++	ret = kconc_execute_operation(ctx, role, &request);
+ 
+ 	mutex_lock(&ctx->guard);
+ 	role->status = ret;
+@@ -510,3 +521,7 @@
+ 
+ MODULE_DESCRIPTION("Kconc synchronous regmap mutex-domain test entry");
+ MODULE_LICENSE("GPL");
++
++#if IS_ENABLED(CONFIG_KCONC_REGMAP_KUNIT_TEST)
++#include "kconc-regmap-kunit.h"
++#endif
+--- /dev/null
++++ b/drivers/base/regmap/kconc-regmap-kunit.h
+@@ -0,0 +1,201 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Test the real operation body; holder threads do not provide KCOV evidence. */
++#include <kunit/test.h>
++#include <linux/completion.h>
++#include <linux/kthread.h>
++
++static int kconc_kunit_init(struct kunit *test)
++{
++	struct kconc_regmap_context *ctx;
++	int ret;
++
++	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	mutex_init(&ctx->guard);
++	mutex_init(&ctx->shared_gate);
++	mutex_init(&ctx->private_gate[0]);
++	mutex_init(&ctx->private_gate[1]);
++	spin_lock_init(&ctx->observer);
++	ret = kconc_create_map(ctx);
++	if (ret) {
++		mutex_destroy(&ctx->private_gate[1]);
++		mutex_destroy(&ctx->private_gate[0]);
++		mutex_destroy(&ctx->shared_gate);
++		mutex_destroy(&ctx->guard);
++		return ret;
++	}
++	ctx->epoch = 1;
++	test->priv = ctx;
++	return 0;
++}
++
++static void kconc_kunit_exit(struct kunit *test)
++{
++	struct kconc_regmap_context *ctx = test->priv;
++
++	kconc_destroy_map(ctx);
++	mutex_destroy(&ctx->private_gate[1]);
++	mutex_destroy(&ctx->private_gate[0]);
++	mutex_destroy(&ctx->shared_gate);
++	mutex_destroy(&ctx->guard);
++}
++
++static void kconc_kunit_serial(struct kunit *test, bool same_register)
++{
++	struct kconc_regmap_context *ctx = test->priv;
++	unsigned int reverse, mode, i, value;
++
++	for (reverse = 0; reverse < 2; reverse++) {
++		for (mode = 0; mode < 2; mode++) {
++			kconc_clear_observations(ctx);
++			for (i = 0; i < 4; i++)
++				KUNIT_ASSERT_EQ(test, regmap_write(ctx->map, i, 0), 0);
++			for (i = 0; i < 2; i++) {
++				unsigned int id = i ^ reverse;
++				struct kconc_regmap_role *role = &ctx->roles[id];
++				struct kconc_regmap_op request = {
++					.abi = KCONC_REGMAP_ABI, .epoch = ctx->epoch,
++					.role = id, .reg = same_register ? 0 : id,
++					.mask = 1U << id, .value = 1U << id, .mode = mode,
++				};
++
++				KUNIT_ASSERT_EQ(test, kconc_execute_operation(ctx, role, &request), 0);
++				KUNIT_EXPECT_EQ(test, role->gate_id, 0U);
++				KUNIT_EXPECT_EQ(test, role->outcome, KCONC_REGMAP_OUTCOME_SUCCESS);
++				KUNIT_EXPECT_EQ(test, role->checkpoint, ctx->epoch);
++				KUNIT_EXPECT_EQ(test, role->api_calls, 1U);
++				KUNIT_EXPECT_EQ(test, role->acquired, 1U);
++				KUNIT_EXPECT_EQ(test, role->released, 1U);
++				KUNIT_EXPECT_EQ(test, role->enter_depth, 1U);
++				KUNIT_EXPECT_EQ(test, role->exit_depth, 0U);
++			}
++			KUNIT_EXPECT_EQ(test, ctx->event_count, 4U);
++			KUNIT_EXPECT_EQ(test, ctx->max_depth, 1U);
++			KUNIT_EXPECT_EQ(test, ctx->in_cs, 0U);
++			KUNIT_EXPECT_EQ(test, ctx->occupants, 0U);
++			KUNIT_EXPECT_EQ(test, kconc_gates_locked(ctx), 0U);
++			for (i = 0; i < 4; i++) {
++				unsigned int expected = i == 0 ? (same_register ? 3 : 1) :
++					(i == 1 && !same_register ? 2 : 0);
++
++				KUNIT_ASSERT_EQ(test, regmap_read(ctx->map, i, &value), 0);
++				KUNIT_EXPECT_EQ(test, value, expected);
++			}
++		}
++	}
++}
++
++static void kconc_kunit_different_registers(struct kunit *test)
++{
++	kconc_kunit_serial(test, false);
++}
++
++static void kconc_kunit_shared_register(struct kunit *test)
++{
++	kconc_kunit_serial(test, true);
++}
++
++struct kconc_kunit_holder {
++	struct mutex *gate;
++	struct completion acquired;
++	struct completion release;
++};
++
++static int kconc_kunit_hold_gate(void *data)
++{
++	struct kconc_kunit_holder *holder = data;
++	unsigned long completed;
++
++	mutex_lock(holder->gate);
++	complete(&holder->acquired);
++	completed = wait_for_completion_timeout(&holder->release, 10 * HZ);
++	mutex_unlock(holder->gate);
++	return completed ? 0 : -ETIMEDOUT;
++}
++
++static void kconc_kunit_busy(struct kunit *test, unsigned int mode)
++{
++	struct kconc_regmap_context *ctx = test->priv;
++	unsigned int id;
++
++	for (id = 0; id < 2; id++) {
++		struct kconc_kunit_holder holder = { .gate = &ctx->shared_gate };
++		struct kconc_regmap_role *role = &ctx->roles[id];
++		struct kconc_regmap_op request = {
++			.abi = KCONC_REGMAP_ABI, .epoch = ctx->epoch, .role = id,
++			.reg = 0, .mask = 1U << id, .value = 1U << id, .mode = mode,
++		};
++		struct task_struct *task;
++		unsigned int value;
++		int ret, holder_ret;
++
++		kconc_clear_observations(ctx);
++		KUNIT_ASSERT_EQ(test, regmap_write(ctx->map, 0, 0), 0);
++		init_completion(&holder.acquired);
++		init_completion(&holder.release);
++		task = kthread_run(kconc_kunit_hold_gate, &holder, "kconc-k11-holder");
++		KUNIT_ASSERT_FALSE(test, IS_ERR(task));
++		if (!wait_for_completion_timeout(&holder.acquired, 5 * HZ)) {
++			complete(&holder.release);
++			kthread_stop(task);
++			KUNIT_FAIL(test, "shared-gate holder failed to start");
++			return;
++		}
++		/* No assertion may abort while the stack-owned holder is still live. */
++		ret = kconc_execute_operation(ctx, role, &request);
++		complete(&holder.release);
++		holder_ret = kthread_stop(task);
++		KUNIT_ASSERT_EQ(test, holder_ret, 0);
++		KUNIT_EXPECT_EQ(test, ret, -EBUSY);
++		KUNIT_EXPECT_EQ(test, role->gate_id, 0U);
++		KUNIT_EXPECT_EQ(test, role->outcome, KCONC_REGMAP_OUTCOME_BUSY);
++		KUNIT_EXPECT_EQ(test, role->acquired, 0U);
++		KUNIT_EXPECT_EQ(test, role->released, 0U);
++		KUNIT_EXPECT_EQ(test, role->checkpoint, 0U);
++		KUNIT_EXPECT_EQ(test, role->api_calls, 0U);
++		KUNIT_EXPECT_EQ(test, role->enter_seq, 0U);
++		KUNIT_EXPECT_EQ(test, role->exit_seq, 0U);
++		KUNIT_EXPECT_EQ(test, ctx->event_count, 1U);
++		KUNIT_EXPECT_EQ(test, ctx->events[0].kind, KCONC_REGMAP_EVENT_BUSY);
++		KUNIT_EXPECT_EQ(test, ctx->in_cs, 0U);
++		KUNIT_EXPECT_EQ(test, kconc_gates_locked(ctx), 0U);
++		KUNIT_ASSERT_EQ(test, regmap_read(ctx->map, 0, &value), 0);
++		KUNIT_EXPECT_EQ(test, value, 0U);
++		/* A fresh observation round must make progress after gate release. */
++		kconc_clear_observations(ctx);
++		ctx->epoch++;
++		request.epoch = ctx->epoch;
++		KUNIT_ASSERT_EQ(test, kconc_execute_operation(ctx, role, &request), 0);
++		KUNIT_EXPECT_EQ(test, role->outcome, KCONC_REGMAP_OUTCOME_SUCCESS);
++		KUNIT_EXPECT_EQ(test, ctx->max_depth, 1U);
++		KUNIT_EXPECT_EQ(test, kconc_gates_locked(ctx), 0U);
++		KUNIT_ASSERT_EQ(test, regmap_read(ctx->map, 0, &value), 0);
++		KUNIT_EXPECT_EQ(test, value, 1U << id);
++	}
++}
++
++static void kconc_kunit_per_role_busy(struct kunit *test)
++{
++	kconc_kunit_busy(test, KCONC_REGMAP_MODE_PER_ROLE);
++}
++
++static void kconc_kunit_shared_busy(struct kunit *test)
++{
++	kconc_kunit_busy(test, KCONC_REGMAP_MODE_SHARED);
++}
++
++static struct kunit_case kconc_kunit_cases[] = {
++	KUNIT_CASE(kconc_kunit_different_registers),
++	KUNIT_CASE(kconc_kunit_shared_register),
++	KUNIT_CASE(kconc_kunit_per_role_busy),
++	KUNIT_CASE(kconc_kunit_shared_busy),
++	{}
++};
++static struct kunit_suite kconc_kunit_suite = {
++	.name = "kconc-k11-mutex",
++	.init = kconc_kunit_init,
++	.exit = kconc_kunit_exit,
++	.test_cases = kconc_kunit_cases,
++};
++kunit_test_suite(kconc_kunit_suite);
+--- a/drivers/base/regmap/Kconfig
++++ b/drivers/base/regmap/Kconfig
+@@ -7,3 +7,11 @@
+ 	  Operations call the real regmap core and its upstream RAM testing bus
+ 	  synchronously in the calling task. This is an experimental interface,
+ 	  not a hardware driver or a production userspace regmap ABI.
++
++config KCONC_REGMAP_KUNIT_TEST
++	bool "Kconc fixed-entry functional KUnit regressions"
++	depends on KCONC_REGMAP_TEST && KUNIT=y
++	help
++	  Exercise the same operation body as the synchronous ioctl over the
++	  real regmap RAM backend. These functional tests do not replace
++	  controlled concurrency regression or validate user-copy handling.

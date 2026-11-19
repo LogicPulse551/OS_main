@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "regression-run-rmw",
+  "operation": "kernel.regress",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k11-irqtail-rmw",
+    "ssh_port": 2249,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k06-k11-irqtail-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "sample_guest_build": "/home/lab/k11/build-03",
+    "search_guest_build": "/home/lab/k11/build-03",
+    "probe_guest_build": "/home/lab/k02/build-vsock-cid-fix"
+  },
+  "inputs": {
+    "bundle": "~/kconc-runs/replay-bind-rmw-001/bundle",
+    "source_mapper": "~/kconc-tools/source-map"
+  },
+  "scenario": {
+    "repetitions": 5
+  }
+}

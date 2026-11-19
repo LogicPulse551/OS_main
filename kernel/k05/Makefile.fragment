@@ -1,0 +1,1 @@
+obj-$(CONFIG_KCONC_REGMAP_TEST) += kconc-regmap.o

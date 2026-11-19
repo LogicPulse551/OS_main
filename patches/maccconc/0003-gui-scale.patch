@@ -1,0 +1,38 @@
+From: OS concurrency competition project
+Subject: [PATCH] GUI: optional local display scale for high-density desktops
+
+Upstream: MAccConc c17ba2d68167d1a892dbdec326bd6cfec32ec9f1
+Upstream author/copyright: Google LLC, 2026; Apache-2.0.
+Team change: optional display scale only; no trace, scheduling or wire changes.
+The default remains the upstream monitor scale. Apply explicitly during build.
+
+--- a/kcov-gui.cpp
++++ b/kcov-gui.cpp
+@@ -29,6 +29,8 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <charconv>
++#include <cmath>
+ #include <cstring>
+ #include <fstream>
+ #include <map>
+@@ -1264,6 +1266,18 @@
+   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+ 
+   float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
++  // Team display-only adaptation; an unset variable preserves upstream behavior.
++  if (const char *requested = getenv("MACCCONC_UI_SCALE")) {
++    float override_scale = 0.0f;
++    const char *end = requested + std::strlen(requested);
++    auto parsed = std::from_chars(requested, end, override_scale);
++    if (parsed.ec != std::errc() || parsed.ptr != end ||
++        !std::isfinite(override_scale) || override_scale < 0.5f || override_scale > 4.0f)
++      errx(1, "MACCCONC_UI_SCALE must be a finite decimal number between 0.5 and 4");
++    main_scale = override_scale;
++    fprintf(stderr, "MAccConc display-only scale override: %.3g\n", main_scale);
++  }
++
+   GLFWwindow* window = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "KCOV viewer", nullptr, nullptr);
+   if (window == nullptr)
+     return 1;

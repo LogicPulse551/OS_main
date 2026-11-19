@@ -1,0 +1,427 @@
+{
+  "schema_version": 1,
+  "kind": "kconc.finite-inputs",
+  "orders": [
+    "ab",
+    "ba"
+  ],
+  "logical_roles": {
+    "A": {
+      "role": 0,
+      "callback": "test_thread1"
+    },
+    "B": {
+      "role": 1,
+      "callback": "test_thread2"
+    }
+  },
+  "scope": "Fourteen existing real regmap input/mode combinations. Orders are sampling directions, not exhaustive interleaving coverage.",
+  "inputs": [
+    {
+      "input_id": "rmw:disjoint-bits:split",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "disjoint-bits",
+      "mode": "split",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-disjoint-bits-split.so"
+    },
+    {
+      "input_id": "rmw:disjoint-bits:update-bits",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "disjoint-bits",
+      "mode": "update-bits",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-disjoint-bits-update-bits.so"
+    },
+    {
+      "input_id": "rmw:overlap-bits:split",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "overlap-bits",
+      "mode": "split",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 3,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 3,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-overlap-bits-split.so"
+    },
+    {
+      "input_id": "rmw:overlap-bits:update-bits",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "overlap-bits",
+      "mode": "update-bits",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 3,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 3,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-overlap-bits-update-bits.so"
+    },
+    {
+      "input_id": "rmw:different-registers:split",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "different-registers",
+      "mode": "split",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 1,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-different-registers-split.so"
+    },
+    {
+      "input_id": "rmw:different-registers:update-bits",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "different-registers",
+      "mode": "update-bits",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 1,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-different-registers-update-bits.so"
+    },
+    {
+      "input_id": "rmw:zero-mask:split",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "zero-mask",
+      "mode": "split",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 0,
+          "value": 0
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-zero-mask-split.so"
+    },
+    {
+      "input_id": "rmw:zero-mask:update-bits",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "zero-mask",
+      "mode": "update-bits",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 0,
+          "value": 0
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k06-zero-mask-update-bits.so"
+    },
+    {
+      "input_id": "rmw:high-bits:split",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "high-bits",
+      "mode": "split",
+      "initial": [
+        2779077210,
+        17,
+        34,
+        51
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 2147483648,
+          "value": 0
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 1073741824,
+          "value": 1073741824
+        }
+      ],
+      "native_so": "regmap-k06-high-bits-split.so"
+    },
+    {
+      "input_id": "rmw:high-bits:update-bits",
+      "family": "rmw",
+      "scenario": "regmap-rmw-v1",
+      "abi": 2,
+      "case_id": "high-bits",
+      "mode": "update-bits",
+      "initial": [
+        2779077210,
+        17,
+        34,
+        51
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 2147483648,
+          "value": 0
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 1073741824,
+          "value": 1073741824
+        }
+      ],
+      "native_so": "regmap-k06-high-bits-update-bits.so"
+    },
+    {
+      "input_id": "mutex:different-registers:shared",
+      "family": "mutex",
+      "scenario": "regmap-mutex-v1",
+      "abi": 3,
+      "case_id": "different-registers",
+      "mode": "shared",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 1,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k07-different-registers-shared.so"
+    },
+    {
+      "input_id": "mutex:different-registers:per-role",
+      "family": "mutex",
+      "scenario": "regmap-mutex-v1",
+      "abi": 3,
+      "case_id": "different-registers",
+      "mode": "per-role",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 1,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k07-different-registers-per-role.so"
+    },
+    {
+      "input_id": "mutex:shared-register:shared",
+      "family": "mutex",
+      "scenario": "regmap-mutex-v1",
+      "abi": 3,
+      "case_id": "shared-register",
+      "mode": "shared",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k07-shared-register-shared.so"
+    },
+    {
+      "input_id": "mutex:shared-register:per-role",
+      "family": "mutex",
+      "scenario": "regmap-mutex-v1",
+      "abi": 3,
+      "case_id": "shared-register",
+      "mode": "per-role",
+      "initial": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "operations": [
+        {
+          "role": 0,
+          "reg": 0,
+          "mask": 1,
+          "value": 1
+        },
+        {
+          "role": 1,
+          "reg": 0,
+          "mask": 2,
+          "value": 2
+        }
+      ],
+      "native_so": "regmap-k07-shared-register-per-role.so"
+    }
+  ]
+}

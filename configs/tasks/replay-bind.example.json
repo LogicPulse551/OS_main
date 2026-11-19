@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "replay-bind",
+  "operation": "replay.bind",
+  "runtime": {},
+  "inputs": {
+    "attempt": "~/kconc-runs/check-rmw-001/attempt-001"
+  }
+}

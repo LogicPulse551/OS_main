@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "rmw-matrix",
+  "operation": "rmw.matrix",
+  "runtime": {
+    "lab_dir": "~/os-concurrency-k06",
+    "ssh_port": 2227,
+    "build_lab": "~/os-concurrency-lab",
+    "kernel_build": "~/os-concurrency-lab/build/linux-k06-01",
+    "scenario_guest_build": "/home/lab/k03/build-01",
+    "rmw_guest_build": "/home/lab/k06/build-01"
+  },
+  "inputs": {}
+}
