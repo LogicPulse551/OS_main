@@ -57,3 +57,18 @@ python3 -B kconc.py run "$RUNS/bma400.json" --output "$RUNS/bma400"
 ```
 
 成功时两版源码与证书位于 `source/package/`。输入指纹失配且原源码可读时，命令返回 3，原因在 `source/result.json`。其余任务模板分别提供来宾初始化、候选导出、实际命中核对、原构建重放、修复回归、预算搜索和见证缩减。[任务模板](../configs/tasks/)
+
+## 扫描驱动并生成读取补丁
+
+在完成[驱动源码与编译记录的准备](BUILDING.md#准备驱动源码与实际编译记录)后使用此命令。`KERNEL` 是原始内核源码，`BUILD` 是对应 Kbuild 对象目录，`LLVM_BIN`、`COMPCERT` 和 `COQ_BIN` 指向匹配的工具链。
+
+```bash
+python3 -B kconc.py optimize --policy init-n \
+  --kernel "$KERNEL" --build-dir "$BUILD" --config "$BUILD/.config" \
+  --scope drivers/iio/accel --clang "$LLVM_BIN/clang" \
+  --coq-bin "$COQ_BIN" --compcert "$COMPCERT" --output "$RUNS/driver-reads"
+```
+
+`scan.json` 逐处列出调用和准入原因。`result.json` 的 `decision` 为 `emit_guarded_sites` 时，`admitted` 给出改写位置，`proof` 绑定局部证书，`linux.patch` 是相对于原始源码的补丁。`keep_original` 表示本次输出沿用原调用，失配原因可在 `reasons` 中查看。
+
+`init-n` 在格式就绪时为每个新对象选定资格。启动参数 `kconc.observe_callbacks=1` 保留逐次回调，供功能核对使用。对照每次读取判断的实现可选 `valid-n`，每次运行使用新的输出目录。其余已实现的策略可用 `python3 -B kconc.py optimize --help` 查看。

@@ -432,11 +432,38 @@ def main(argv=None):
     demo = sub.add_parser('demo', help='Open a saved competition run as a portable offline report')
     demo.add_argument('bundle', type=Path)
     demo.add_argument('--output', type=Path, required=True)
+    opt = sub.add_parser('optimize', help='Find and certify regmap bulk reads in a Linux source tree')
+    opt.add_argument('--kernel', required=True, type=Path)
+    opt.add_argument('--config', required=True, type=Path, help='resolved x86_64 Kbuild .config')
+    opt.add_argument('--scope', default='drivers', help='driver directory or file relative to the kernel')
+    opt.add_argument('--policy', choices=('private-api', 'valid-api', 'valid-n', 'init-n', 'registered'),
+                     help='select private objects, six-byte IIO reads, variable reads checked per call or '
+                          'at map initialization, or registered SPI instances')
+    opt.add_argument('--build-dir', type=Path, default=os.getenv('KCONC_KBUILD_DIR'),
+                     help='configured kernel object directory containing Kbuild compilation records')
+    opt.add_argument('--clang', type=Path, help='Clang binary used for Kbuild (default: clang on PATH)')
+    opt.add_argument('--compcert', type=Path, default=os.getenv('KCONC_COMPCERT'))
+    opt.add_argument('--coq-bin', type=Path, default=os.getenv('KCONC_COQ_BIN'))
+    opt.add_argument('--materialize', action='store_true', help='also create a ready-to-build Linux source copy')
+    opt.add_argument('--output', required=True, type=Path, help='new directory outside both source trees')
     try:
         args = parser.parse_args(argv)
         if args.command == 'commands':
             value = {'schema_version': 1, 'kind': 'kconc.catalog', 'operations': CATALOG,
+                     'source_commands': {'optimize': 'Discover and certify six-byte regmap reads in a Linux source tree'},
                      'scope': 'Runtime adapters, not a copy of the external development task status'}
+            code = 0
+        elif args.command == 'optimize':
+            if args.policy == 'registered' or (args.policy is None and args.build_dir is None):
+                from .sixbyte import optimize
+            elif args.policy in ('valid-api', 'valid-n', 'init-n'):
+                from .valid_opt import optimize
+            else:
+                from .api_opt import optimize
+            try:
+                value = optimize(args)
+            except (OSError, ValueError) as error:
+                raise OperationError('invalid_optimization_input', str(error)) from error
             code = 0
         elif args.command == 'validate':
             task = load_manifest(args.manifest)

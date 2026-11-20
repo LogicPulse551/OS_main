@@ -83,6 +83,28 @@ done
 
 功能核对使用独立观察构建。正式计时关闭观察器，使用四 vCPU 来宾的 CPU 2。完整配对实验还需对应的来宾镜像与采集脚本，并按演示包中的 `kit/perf/protocol.json` 固定宿主亲和性、启动顺序和批次。
 
+## 准备驱动源码与实际编译记录
+
+按前表准备原始源码归档、LLVM、CompCert 和 Coq。推广后的读取规则使用仓库中的[加速度计驱动配置](../configs/optimization/sixbyte-x86_64.config)。在 WSL 的 Linux 文件系统上解包干净的源码，使用独立的 Kbuild 输出目录，使分析器可以核对驱动实际使用的头文件和编译参数。
+
+```bash
+mkdir -p "$HOME/kconc-builds"
+SCAN_RUN=$(mktemp -d "$HOME/kconc-builds/scan.XXXXXX")
+KERNEL="$SCAN_RUN/linux"
+BUILD="$SCAN_RUN/obj"
+mkdir "$KERNEL" "$BUILD"
+tar -xf "$LINUX_ARCHIVE" -C "$KERNEL"
+cp configs/optimization/sixbyte-x86_64.config "$BUILD/.config"
+export KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="2026-11-19 00:00:00 UTC"
+export KBUILD_BUILD_USER=lab KBUILD_BUILD_HOST=api-frame
+build=(make -C "$KERNEL" O="$BUILD" ARCH=x86_64 LLVM="$LLVM_BIN/" HOSTCC=gcc HOSTCXX=g++ KCFLAGS= KCPPFLAGS=)
+"${build[@]}" olddefconfig
+cmp configs/optimization/sixbyte-x86_64.config "$BUILD/.config"
+"${build[@]}" -j4 bzImage modules_prepare
+```
+
+保留源码、原始配置和对象目录，在同一 Bash 会话中执行[扫描和生成补丁](RUNNING.md#扫描驱动并生成读取补丁)。[软件 SPI 外设模块](../kernel/sixbyte-boards/)提供内核功能验证所用的模拟设备。
+
 ## 证明依赖与许可
 
 PromisingComp 与 SEQ 使用各自独立的 opam 环境。前者锁定 Coq 8.13.1、OCaml 4.12.1 和 Paco 4.0.4，后者锁定 Coq 8.15.0、OCaml 4.14.2、Paco 4.1.2 和 ITree 4.0.0。驱动提供源码核验、完整构建、`coqchk` 与原算法的输入输出示例。[依赖锁](../configs/optimization/) · [驱动](../scripts/optimization/) · [证明工件](../proofs/)
