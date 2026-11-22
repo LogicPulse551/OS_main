@@ -36,6 +36,69 @@ python3 scripts/prepare-maccconc-vm.py --source-lab "$LAB_DIR" --target-lab "$HO
 
 基础来宾关机后方可派生。场景来宾还需要 openEuler 内原生编译的执行器和探针。保留匹配的来宾磁盘依赖链、`bzImage`、未剥离的 `vmlinux`、`.config`、`System.map`、源码映射器和构建记录，启动时选择对应内核。原构建重放和跨构建修复回归各自读取登记的环境与见证。[来宾适配](../adapters/maccconc/) · [构建及运行探针](../scripts/) · [任务模板](../configs/tasks/)
 
+## 为两个 IIO 读取者准备实验环境
+
+在 Debian 宿主安装 `gcc`、`libc6-dev`、`binutils`、`cpio` 和 `e2fsprogs`。准备与上节同一版本的带 KCOV 访存记录的 Linux 源码和工具链，以及一份关机后的 openEuler qcow2。来宾的第二分区应为 ext4 根分区，并装有 Bash、kmod、mount 和 sha256sum。每次启动都将它只读挂载，原始观测写入另建的证据盘。
+
+将 `DISK` 设为来宾磁盘的绝对路径。下面先选 KX022A；验证 BMA400 时将 `BOARD` 改为 `bma400_board`，在新目录独立登记。已有符合这些条件的构建时，使用其源码和 LLVM，将 `OBJ` 指向带有 `source` 链接、符号和 `Module.symvers` 的对象目录，从编译外设模块开始。
+
+```bash
+BOARD=kx022a_lab
+BASE_CONFIG="$LAB_DIR/build/linux-2fc2e45b0cd7/.config"
+LINUX=$(realpath "$(dirname "$BASE_CONFIG")/source")
+LLVM_BIN="$LAB_DIR/toolchains/llvm-dc5c6d008f48/bin"
+W=$(mktemp -d "$HOME/iio-read.XXXXXX")
+OBJ="$W/obj"
+mkdir "$OBJ" "$W/board"
+cp "$BASE_CONFIG" "$OBJ/.config"
+options=(IIO_KX022A_SPI IIO_KX022A)
+if [[ $BOARD == bma400_board ]]; then options=(BMA400 BMA400_SPI); fi
+"$LINUX/scripts/config" --file "$OBJ/.config" -e SPI -e IIO -e "${options[0]}" \
+  -e REGULATOR -e GPIOLIB -e GPIO_SIM -e DEVTMPFS -e SYSFS -e KPROBE_EVENTS -d RANDOMIZE_BASE
+export KCFLAGS='-fno-optimize-sibling-calls -mllvm -sanitizer-coverage-prune-blocks=false'
+build=(make -C "$LINUX" O="$OBJ" ARCH=x86_64 LLVM="$LLVM_BIN/")
+"${build[@]}" olddefconfig
+for option in KCOV KCOV_EXT_RECORDS KCOV_MEMORY KCOV_INSTRUMENT_ALL REGMAP_SPI \
+  KPROBE_EVENTS DEBUG_INFO DEVTMPFS VIRTIO_BLK EXT4_FS "${options[@]}"; do
+  grep -qx "CONFIG_${option}=y" "$OBJ/.config"
+done
+"${build[@]}" -j4 bzImage modules_prepare
+if [[ ! -s "$OBJ/Module.symvers" ]]; then cp "$OBJ/vmlinux.symvers" "$OBJ/Module.symvers"; fi
+cp "kernel/iio-spi-board/stock/$BOARD.c" "$W/board/"
+printf 'obj-m += %s.o\nKCOV_INSTRUMENT := n\n' "$BOARD" > "$W/board/Makefile"
+"${build[@]}" M="$W/board" modules
+gcc -static -Wall -Wextra -Werror -O2 scripts/iio-path/init.c -o "$W/init"
+cap=(python3 -B scripts/iio-path/capture.py)
+"${cap[@]}" register "$OBJ" "$W/board/$BOARD.ko" "$W/init" "$DISK" "$W/profile.json"
+"${cap[@]}" prepare "$W/profile.json" "$W/plain"
+```
+
+普通包只采集 X、Y 两个 sysfs 读取。先在普通板上登记由运行数据区分的两条路径，再根据实际源码中的 `read_raw` 注册安装入口和返回观察点。使用同一份内核、只读盘和已登记的参考文件生成后续包。[接口实现](../scripts/iio-path/) · [软件外设](../kernel/iio-spi-board/)
+
+```bash
+"${cap[@]}" boot "$W/plain" train "$W/train"
+python3 -B kconc.py iio discover --capture "$W/train" --out "$W/discovery.json"
+python3 -B scripts/iio-path/markers.py "$W/plain" "$W/discovery.json" "$LINUX" "$W/markers"
+"${cap[@]}" boot "$W/markers" natural "$W/passive"
+ORDER=XY
+if [[ $BOARD == bma400_board ]]; then ORDER=YX; fi
+python3 -B scripts/iio-path-overlap/checks/inspect_overlap.py \
+  --capture "$W/passive" --package "$W/markers/package.json" \
+  --reference "$W/discovery.json" --order "$ORDER" --out "$W/natural.json"
+```
+
+查看 `natural.json` 的 `pairs` 和 `strict_matches`。此版本要求在同一批八对自然读取中，该方向恰有一对显示“第一笔已提交、第二个读者已进入、第一笔才开始传输”。符合这一条件后保留整批记录和参考，使用软件 SPI 控制器的准备回调生成主动包。自然采样可能得到零对或多对，这样的批次保留为观察记录。每次新采样、组包及启动均使用独立目录。
+
+```bash
+python3 -B scripts/iio-path-overlap/build_board.py "$W/plain/package.json" \
+  "$W/overlap-board" "$W/board-build" "$LLVM_BIN"
+python3 -B scripts/iio-path-overlap/checks/prepare.py "$W/markers" "$W/board-build" "$ORDER" "$W/active"
+python3 -B scripts/replay-iio-overlap.py --package "$W/active" --reference "$W/discovery.json" \
+  --natural "$W/natural.json" --out "$W/replay"
+```
+
+已保存的历史包使用各自登记的板、内核和启动程序；用公开源码重建时按新产物的身份重新采样。完整读取的顺序核对、冷启动和离线复核命令见[运行速查](RUNNING.md)。
+
 ## BMA400 的源码证书和目标文件
 
 先按下表将变量设为本机的实际绝对路径。对象构建驱动重新检查证书、配置和工具指纹，并用正常优化配置分别编译原版与优化版。[规则与输入指纹](../configs/optimization/bma400-six-byte.json) · [证明环境指纹](../proofs/bma400-noop/compcert-runtime.json)

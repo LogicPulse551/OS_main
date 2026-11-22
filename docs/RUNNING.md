@@ -25,6 +25,29 @@ python3 -B kconc.py demo "$KIT/bundle.json" --output "$RUNS/demo"
 | 修复构建 40/40 | `kit/repair/acceptance.json` 的 `summary.current` 记录正式批次，`summary.historical` 保存早期批次。 |
 | 优化与计时 | `kit/opt/certificate.json` 绑定两版源码。`kit/perf/protocol.json` 和 `kit/perf/ledger.json` 给出协议和各次启动，重新计算的结果在输出的 `summary.json` 中。 |
 
+## 识别并重放两次传感器读取
+
+在 WSL Debian 中操作。按[环境与构建](BUILDING.md)准备一款软件 SPI 板的普通采样包，将它的目录记为 `NORMAL_PACKAGE`。以下命令训练一次，再用另一次冷启动分别核对 X→Y 和 Y→X。
+
+```bash
+python3 -B scripts/iio-path/capture.py boot "$NORMAL_PACKAGE" train "$RUNS/train"
+python3 -B kconc.py iio discover --capture "$RUNS/train" --out "$RUNS/axes.json"
+python3 -B scripts/iio-path/capture.py boot "$NORMAL_PACKAGE" xy-first "$RUNS/ordered"
+python3 -B kconc.py iio verify --capture "$RUNS/ordered" --reference "$RUNS/axes.json" \
+  --order XY --keys xy1 xy2 --out "$RUNS/xy.json"
+python3 -B kconc.py iio verify --capture "$RUNS/ordered" --reference "$RUNS/axes.json" \
+  --order YX --keys yx1 yx2 --out "$RUNS/yx.json"
+```
+
+要重放读取内部的重叠，请使用同一组已登记的输入。`REPLAY_PACKAGE` 是带一次准备窗口的软件板运行包，`AXES` 是对应驱动的轴特征登记，`NATURAL` 是从普通板采样中核实了目标交错的参考 JSON。三者的生成方式见[构建说明](BUILDING.md)。
+
+```bash
+python3 -B scripts/replay-iio-overlap.py --package "$REPLAY_PACKAGE" \
+  --reference "$AXES" --natural "$NATURAL" --out "$RUNS/replayed"
+```
+
+每次执行都会冷启动一套来宾。`verdict.json` 给出进入驱动、提交、开始和完成传输的实际事件，以及两次读取的结果。`negative.json` 记录三个改错中间证据的对照。已有原始记录时，在同一命令中加 `--check-only "$SAVED_SLOT"` 并更换输出目录，即可离线复核。
+
 ## 从原始执行生成源码报告
 
 `BUNDLE` 指向完整见证目录，`BUILD_RECORD` 指向匹配的源码构建清单 JSON，`SOURCE_ROOT` 指向该次内核源码树或快照的根目录。请先把三个变量设为本机的实际路径。

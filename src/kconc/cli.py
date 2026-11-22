@@ -414,6 +414,9 @@ class Parser(argparse.ArgumentParser):
 def main(argv=None):
     parser = Parser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    iio = sub.add_parser('iio', help='Identify and compare normal IIO reads from saved captures')
+    iio.add_argument('action', choices=('discover', 'verify', 'negative'))
+    iio.add_argument('arguments', nargs=argparse.REMAINDER)
     sub.add_parser('commands', help='List implemented operations and explicit unsupported capabilities')
     validate = sub.add_parser('validate', help='Validate a runtime task manifest offline')
     validate.add_argument('manifest', type=Path)
@@ -448,6 +451,9 @@ def main(argv=None):
     opt.add_argument('--output', required=True, type=Path, help='new directory outside both source trees')
     try:
         args = parser.parse_args(argv)
+        if args.command == 'iio':
+            from .iio_path import main as iio_main
+            return iio_main([args.action, *args.arguments])
         if args.command == 'commands':
             value = {'schema_version': 1, 'kind': 'kconc.catalog', 'operations': CATALOG,
                      'source_commands': {'optimize': 'Discover and certify six-byte regmap reads in a Linux source tree'},
