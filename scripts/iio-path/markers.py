@@ -20,9 +20,12 @@ package = json.loads((args.package / "package.json").read_bytes())
 registry = json.loads(args.registry.read_bytes())
 if any(package[key] != value for key, value in registry["identity"].items()):
     raise ValueError("reference and original capture identity differ")
-x, y = (set(registry["signature"][axis]["driver"]) for axis in ("X", "Y"))
+signature = registry["signature"]
+if set(signature) not in (set("XY"), set("XYZ")):
+    raise ValueError("expected a reference covering the registered axes")
+common = set.intersection(*(set(features["driver"]) for features in signature.values()))
 found = []
-for name in sorted(x & y):
+for name in sorted(common):
     file, symbol = name.split("::")
     if not re.fullmatch(r"drivers/iio/[A-Za-z0-9_./-]+\.c", file) or ".." in Path(file).parts:
         raise ValueError("unexpected source path")

@@ -177,7 +177,8 @@ if __name__ == "__main__":
     prep.add_argument("dest", type=Path)
     capture = commands.add_parser("boot")
     capture.add_argument("package", type=Path)
-    capture.add_argument("mode", choices=("train", "xy-first", "yx-first", "natural"))
+    capture.add_argument("mode", choices=("train", "xy-first", "yx-first", "natural",
+                                          "train3", "ordered3", "natural3"))
     capture.add_argument("slot", type=Path)
     args = parser.parse_args()
     if args.action == "register":

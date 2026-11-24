@@ -36,7 +36,7 @@ python3 scripts/prepare-maccconc-vm.py --source-lab "$LAB_DIR" --target-lab "$HO
 
 基础来宾关机后方可派生。场景来宾还需要 openEuler 内原生编译的执行器和探针。保留匹配的来宾磁盘依赖链、`bzImage`、未剥离的 `vmlinux`、`.config`、`System.map`、源码映射器和构建记录，启动时选择对应内核。原构建重放和跨构建修复回归各自读取登记的环境与见证。[来宾适配](../adapters/maccconc/) · [构建及运行探针](../scripts/) · [任务模板](../configs/tasks/)
 
-## 为两个 IIO 读取者准备实验环境
+## 为 IIO 读取者准备实验环境
 
 在 Debian 宿主安装 `gcc`、`libc6-dev`、`binutils`、`cpio` 和 `e2fsprogs`。准备与上节同一版本的带 KCOV 访存记录的 Linux 源码和工具链，以及一份关机后的 openEuler qcow2。来宾的第二分区应为 ext4 根分区，并装有 Bash、kmod、mount 和 sha256sum。每次启动都将它只读挂载，原始观测写入另建的证据盘。
 
@@ -73,7 +73,7 @@ cap=(python3 -B scripts/iio-path/capture.py)
 "${cap[@]}" prepare "$W/profile.json" "$W/plain"
 ```
 
-普通包只采集 X、Y 两个 sysfs 读取。先在普通板上登记由运行数据区分的两条路径，再根据实际源码中的 `read_raw` 注册安装入口和返回观察点。使用同一份内核、只读盘和已登记的参考文件生成后续包。[接口实现](../scripts/iio-path/) · [软件外设](../kernel/iio-spi-board/)
+普通包支持两个或三个轴的 sysfs 读取。下面先登记 X、Y 两条路径，再根据实际源码中的 `read_raw` 注册驱动入口和返回观察点。三轴实验复用这份内核、只读盘与软件板，按[三轴读取重放](RUNNING.md#三轴读取重放)单独采样和登记。[接口实现](../scripts/iio-path/) · [软件外设](../kernel/iio-spi-board/)
 
 ```bash
 "${cap[@]}" boot "$W/plain" train "$W/train"
@@ -98,6 +98,39 @@ python3 -B scripts/replay-iio-overlap.py --package "$W/active" --reference "$W/d
 ```
 
 已保存的历史包使用各自登记的板、内核和启动程序；用公开源码重建时按新产物的身份重新采样。完整读取的顺序核对、冷启动和离线复核命令见[运行速查](RUNNING.md)。
+
+## 三线程寄存器更新的运行包
+
+完整操作搜索使用已登记的原实验内核。将 `KERNEL_RECEIPT` 设为上文 `build-maccconc.py kernel` 生成的 `build-result.json`，其构建系列为 `linux-original`。`DISK` 指向关机后的只读 openEuler qcow2。工作目录建在仓库外。
+
+```bash
+W=$(mktemp -d "$HOME/ram-regmap.XXXXXX")
+python3 -B scripts/register-artifact.py --receipt "$KERNEL_RECEIPT" --output "$W/detection.json"
+python3 -B scripts/build-regmap-actors.py --identity "$W/detection.json" --out "$W/actor-module"
+```
+
+性质对照使用更新丢失、互斥两组各自的原始和修复内核。`UPDATE_REPAIR_RECEIPT` 与 `MUTEX_REPAIR_RECEIPT` 是[修复内核构建工具](../scripts/build-k11-kernel.py)在 `rmw` 与 `mutex` 两个场景生成的 `build-result.json`。登记程序会从这两份收据查找并核对各自的原始构建。`LLVM_BIN` 与 `CLANG_SHA256` 取自登记的原实验工具链。
+
+```bash
+gcc -static -O2 scripts/iio-path/init.c -o "$W/init"
+python3 -B scripts/register-regmap-three.py --update-repair "$UPDATE_REPAIR_RECEIPT" \
+  --mutex-repair "$MUTEX_REPAIR_RECEIPT" --disk "$DISK" --init "$W/init" --out "$W/profiles.json"
+python3 -B scripts/build-regmap-three-check.py "$W/profiles.json" "$W/packages" \
+  --clang "$LLVM_BIN/clang" --clang-sha256 "$CLANG_SHA256"
+```
+
+## Ubuntu 测试内核
+
+Ubuntu 路径使用发行版源码包 `linux 6.8.0-31.31` 和仓内的[实验配置](../scripts/regmap-central/ubuntu.config)。在 x86_64 Linux 宿主准备 GCC、make、flex、bison、bc、libssl-dev、libelf-dev、dpkg-dev、binutils、kmod 和静态 libc。运行需要 QEMU/KVM 及上述只读来宾盘。取得 Ubuntu 官方源码包的 `.dsc` 和其中列出的源档，放在同一目录，把 `UBUNTU_DSC` 指向该文件。
+
+```bash
+W=$(mktemp -d "$HOME/ubuntu-regmap.XXXXXX")
+bash scripts/regmap-central/build-ubuntu.sh "$UBUNTU_DSC" "$W/ubuntu"
+python3 -B scripts/regmap-central/prepare.py --kernel-build "$W/ubuntu/obj" \
+  --disk "$DISK" --output "$W/ubuntu-package"
+```
+
+构建脚本先核对 `.dsc` 的固定哈希和配套源码档的哈希，再解包编译。已有用这份源码及配置完成的 Kbuild 时，可以把 `--kernel-build` 指向其输出，直接准备运行包。每份包单独登记内核、重编模块、initrd 和磁盘身份，运行时与来宾实际身份核对。这份配置关闭了 `CONFIG_PROC_SYSCTL`，各次独立 QEMU 启动使用来宾生成的随机标识区分，来源记录在串口中。[运行速查](RUNNING.md#在-ubuntu-内核上重放操作交接)
 
 ## BMA400 的源码证书和目标文件
 

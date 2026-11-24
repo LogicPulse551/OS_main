@@ -62,6 +62,42 @@ class IIOPaths(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mismatch"):
             scan.attach_trace("\n".join(rows), {"q": scan.Read("q", "X", 44, 2, 0, 0, 2)})
 
+    def test_three_axes_learned_and_middle_paths_exchanged(self):
+        # All endpoints and values coincide. Changing just the regmap events
+        # must identify the other axis even on a different traversal order.
+        regs = {"X": "ce", "Y": "1b", "Z": "b4"}
+        ops = [sample(str(i), axis, regs[axis], i * 10 + 1)
+               for i, axis in enumerate("XYZZYX")]
+        meta = dict(self.meta, mode="train3")
+        ref = scan.train(meta, {op.key: op for op in ops}, {}, {})
+        self.assertEqual(ref["schema"], scan.THREE_AXIS_SCHEMA)
+        for pair, order in ((ops[:3], "XYZ"), (ops[3:], "ZYX")):
+            result = scan.compare(ref, pair, order)
+            self.assertTrue(result["passed"])
+            self.assertEqual([op["identified_by_path"] for op in result["observations"]],
+                             [[axis] for axis in order])
+            control = scan.negative_checks(ref, pair, order)
+            self.assertTrue(control["passed"])
+            wrong = control["exchanged_regmap_paths"]["observations"]
+            for op, observation in zip(pair, wrong):
+                self.assertEqual(observation["returned"], op.returned())
+                self.assertEqual(observation["identified_by_path"], [{"X": "X", "Y": "Z", "Z": "Y"}[op.axis]])
+        ops[2].tid = ops[1].tid
+        self.assertFalse(scan.compare(ref, ops[:3], "XYZ")["passed"])
+        ops[2].tid += 1
+        ops[2].begin = ops[1].end
+        self.assertFalse(scan.compare(ref, ops[:3], "XYZ")["passed"])
+
+    def test_three_axis_reference_rejects_missing_or_indistinguishable_z(self):
+        meta = dict(self.meta, mode="train3")
+        with self.assertRaisesRegex(ValueError, "missing"):
+            scan.train(meta, self.rows, {}, {})
+        for index in (61, 71):
+            op = sample(str(index), "Z", "e", index)
+            self.rows[op.key] = op
+        with self.assertRaisesRegex(ValueError, "does not distinguish"):
+            scan.train(meta, self.rows, {}, {})
+
     def test_entry_decoding_skips_payload_and_rejects_active_hooks(self):
         words = (0x00ffffff81001000, 0, 0x3000000000000000, 0, 0, 0, 0, 0x1000000000000000)
         self.assertEqual(scan.entry_pcs(struct.pack("<8Q", *words), 8), ["0xffffffff81001000"])

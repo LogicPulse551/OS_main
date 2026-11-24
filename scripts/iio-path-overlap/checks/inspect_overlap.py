@@ -33,7 +33,7 @@ class Event:
 
 
 ROW = re.compile(r"-(\d+)\s+(?:\([^)]*\)\s+)?\[\s*\d+\].*? (\d+\.\d+): (\w+): (.*)$")
-MARKER = re.compile(r"IIO_(BEGIN|END) key=([\w-]+) axis=([XY])(?: rc=(-?\d+) value=(-?\d+))?$")
+MARKER = re.compile(r"IIO_(BEGIN|END) key=([\w-]+) axis=([XYZ])(?: rc=(-?\d+) value=(-?\d+))?$")
 SPI = re.compile(r"(\S+) ([\da-fA-F]+)(?: len=(\d+)/(\d+))?$")
 
 
@@ -133,11 +133,11 @@ def messages(events):
     return completed
 
 
-def axis_reads(slot,events,cert,symbol):
+def axis_reads(slot,events,cert,symbol,axes=('X','Y')):
     table={}
     for line in (slot/'ops.tsv').read_text().splitlines():
         key,axis,tid,bytes_read,err,value,count=line.split()
-        check(key not in table and axis in ('X','Y') and int(bytes_read)>0 and int(err)==0 and
+        check(key not in table and axis in axes and int(bytes_read)>0 and int(err)==0 and
               int(count)>0 and (slot/(key+'.words')).stat().st_size==8*int(count),'incomplete normal read')
         table[key]=(axis,int(tid),int(bytes_read),int(value))
     by_key={}

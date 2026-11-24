@@ -29,6 +29,7 @@ mode=
 for arg in $(cat /proc/cmdline); do
     case "$arg" in iio.mode=*) mode=${arg#iio.mode=} ;; esac
 done
+if [[ $mode == *3 ]]; then test -r "$device/in_accel_z_raw"; fi
 printf 'boot_id=%s\niio_name=%s\nbound_driver=%s\nboard_module=%s\nmode=%s\n' \
        "$boot" "$(cat "$device/name")" "$driver" "$board" "$mode" > run.env
 sha256sum "$payload/read-axes" "$payload/board.ko" "$payload/observe.sh" > guest-payload.sha256
@@ -58,6 +59,25 @@ case "$mode" in
         capture seq t07 Y t08 X ;;
     xy-first) capture seq xy1 X xy2 Y; capture seq yx1 Y yx2 X ;;
     yx-first) capture seq yx1 Y yx2 X; capture seq xy1 X xy2 Y ;;
+    train3)
+        capture seq t01 X t02 Y t03 Z
+        capture seq t04 Z t05 X t06 Y
+        capture seq t07 Y t08 Z t09 X
+        capture seq t10 Z t11 Y t12 X ;;
+    ordered3) capture seq xyz1 X xyz2 Y xyz3 Z; capture seq zyx1 Z zyx2 Y zyx3 X ;;
+    natural3)
+        # The three readers share a start barrier. Balance thread creation order
+        # across the batch without ordering their entry into the native driver.
+        for n in {01..12}; do
+            case "$n" in
+                01|07) capture parallel "nx$n" X "ny$n" Y "nz$n" Z ;;
+                02|08) capture parallel "nx$n" X "nz$n" Z "ny$n" Y ;;
+                03|09) capture parallel "ny$n" Y "nx$n" X "nz$n" Z ;;
+                04|10) capture parallel "ny$n" Y "nz$n" Z "nx$n" X ;;
+                05|11) capture parallel "nz$n" Z "nx$n" X "ny$n" Y ;;
+                06|12) capture parallel "nz$n" Z "ny$n" Y "nx$n" X ;;
+            esac
+        done ;;
     natural)
         for n in 01 02 03 04 05 06 07 08; do capture parallel "nx$n" X "ny$n" Y; done ;;
     *) echo "unknown mode $mode"; exit 1 ;;

@@ -16,11 +16,12 @@ import uuid
 
 
 SCHEMA = "kconc.iio-read-path.v1"
+THREE_AXIS_SCHEMA = "kconc.iio-three-read-path.v1"
 IDENTITY = ("kernel_build_id", "kernel_sha256", "vmlinux_sha256", "config_sha256",
             "board_sha256", "board_build_id", "initrd_sha256")
 WIDTH = {0: 2, 1: 1, 2: 1, 3: 5, 4: 1, 5: 1, 15: 1}
 FTRACE = re.compile(r"-(\d+)\s+(?:\([^)]*\)\s+)?\[\s*\d+\]\s+.*?\d+\.\d+:\s+(\w+):\s*(.*)")
-MARKER = re.compile(r"IIO_(BEGIN|END) key=([A-Za-z0-9_-]+) axis=([XY])(?: rc=(-?\d+) value=(-?\d+))?$")
+MARKER = re.compile(r"IIO_(BEGIN|END) key=([A-Za-z0-9_-]+) axis=([XYZ])(?: rc=(-?\d+) value=(-?\d+))?$")
 # Location and transfer shape are public regmap event fields. Payload values,
 # timestamps, dynamic addresses and command-line labels do not classify a read.
 FIELDS = re.compile(r"\b(reg|register|count|len|length|bytes|nregs)=((?:0x)?[a-fA-F0-9]+)\b")
@@ -137,7 +138,7 @@ def load_capture(slot):
     inputs = ["ops.tsv", "trace.txt", "build.json", "stats.txt"]
     for line in (slot / "ops.tsv").read_text().splitlines():
         key, axis, *numbers = line.split("\t")
-        require(re.fullmatch(r"[A-Za-z0-9_-]+", key) and axis in ("X", "Y")
+        require(re.fullmatch(r"[A-Za-z0-9_-]+", key) and axis in ("X", "Y", "Z")
                 and key not in reads and len(numbers) == 5, "invalid operation table")
         op = Read(key, axis, *(int(n) for n in numbers))
         require(op.tid > 0 and op.size > 0 and op.error == 0, "normal sysfs read did not complete")
@@ -204,7 +205,9 @@ def project(meta, reads, known=None):
 
 def train(meta, reads, hashes, symbols):
     signatures, returns, counts = {}, {}, {}
-    for axis in ("X", "Y"):
+    axes = "XYZ" if meta.get("mode") == "train3" else "XY"
+    require({op.axis for op in reads.values()} == set(axes), "missing or unexpected training axis")
+    for axis in axes:
         rows = [op for op in reads.values() if op.axis == axis]
         require(len(rows) >= 2, f"need repeated training reads for {axis}")
         counts[axis] = len(rows)
@@ -214,18 +217,22 @@ def train(meta, reads, hashes, symbols):
         require(all(op.path() == signature for op in rows), f"unstable {axis} training path")
         signatures[axis] = signature
         returns[axis] = sorted(set(tuple(op.returned()) for op in rows))
-    require(signatures["X"]["regmap"] != signatures["Y"]["regmap"],
-            "public regmap transcript does not distinguish X and Y")
-    return {"schema": SCHEMA, "identity": identity(meta), "training_boot_id": meta["boot_id"],
+    require(len({digest_json(s["regmap"]) for s in signatures.values()}) == len(axes),
+            "public regmap transcript does not distinguish every axis")
+    drivers = [s["driver"] for s in signatures.values()]
+    return {"schema": THREE_AXIS_SCHEMA if axes == "XYZ" else SCHEMA,
+            "identity": identity(meta), "training_boot_id": meta["boot_id"],
             "training_raw_sha256": hashes, "training_counts": counts, "signature": signatures,
             "returned": {axis: [list(row) for row in values] for axis, values in returns.items()},
-            "driver_path_distinguishes_axes": signatures["X"]["driver"] != signatures["Y"]["driver"],
-            "common_driver_functions": sorted(set(signatures["X"]["driver"]) & set(signatures["Y"]["driver"])),
+            "driver_path_distinguishes_axes": len(set(map(tuple, drivers))) == len(axes),
+            "common_driver_functions": sorted(set.intersection(*map(set, drivers))),
             "symbols": symbols}
 
 
 def compare(reference, pair, order):
-    require(len(pair) == 2 and order in ("XY", "YX"), "invalid pair")
+    axes = set(reference["signature"])
+    require(axes in (set("XY"), set("XYZ")) and set(order) == axes
+            and len(order) == len(pair) == len(axes), "order differs from registered axes")
     reasons, details = [], []
     for op, axis in zip(pair, order):
         matches = [kind for kind, sig in reference["signature"].items() if op.path() == sig]
@@ -236,15 +243,18 @@ def compare(reference, pair, order):
         details.append({"key": op.key, "expected": axis, "identified_by_path": matches,
                         "tid": op.tid, "begin_line": op.begin, "end_line": op.end,
                         "returned": op.returned(), "path": op.path()})
-    if pair[0].end >= pair[1].begin:
+    if any(left.end >= right.begin for left, right in zip(pair, pair[1:])):
         reasons.append("complete read ordering differs")
+    if len(pair) == 3 and len({op.tid for op in pair}) != 3:
+        reasons.append("three independently identified readers are required")
     return {"passed": not reasons, "reasons": reasons, "observations": details}
 
 
 def negative_checks(reference, pair, order):
     require(compare(reference, pair, order)["passed"], "untampered pair did not match")
     changed = deepcopy(pair)
-    changed[0].regmap, changed[1].regmap = changed[1].regmap, changed[0].regmap
+    a, b = ((order.index("Y"), order.index("Z")) if len(order) == 3 else (0, 1))
+    changed[a].regmap, changed[b].regmap = changed[b].regmap, changed[a].regmap
     swapped = compare(reference, changed, order)
     changed = deepcopy(pair)
     stream = changed[0].regmap
@@ -269,13 +279,13 @@ def main(argv=None):
         command.add_argument("--out", type=Path, required=True)
         if name != "discover":
             command.add_argument("--reference", type=Path, required=True)
-            command.add_argument("--order", choices=("XY", "YX"), required=True)
-            command.add_argument("--keys", nargs=2, required=True)
+            command.add_argument("--order", choices=("XY", "YX", "XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"), required=True)
+            command.add_argument("--keys", nargs="+", required=True)
     args = parser.parse_args(argv)
     try:
         meta, reads, hashes = load_capture(args.capture)
         if args.command == "discover":
-            require(meta.get("mode") == "train", "discovery requires a training capture")
+            require(meta.get("mode") in ("train", "train3"), "discovery requires a training capture")
             symbols = project(meta, reads)
             result = train(meta, reads, hashes, symbols)
             result["certificate_sha256"] = digest_json(result)
@@ -283,10 +293,11 @@ def main(argv=None):
         else:
             reference = read_json(args.reference)
             seal = reference.pop("certificate_sha256")
-            require(digest_json(reference) == seal and reference["schema"] == SCHEMA, "invalid certificate")
+            schema = THREE_AXIS_SCHEMA if len(args.order) == 3 else SCHEMA
+            require(digest_json(reference) == seal and reference["schema"] == schema, "invalid certificate")
             require(reference["identity"] == identity(meta), "capture identity differs from reference")
             require(reference["training_boot_id"] != meta["boot_id"], "same boot as training")
-            require(args.keys[0] != args.keys[1], "duplicate trial key")
+            require(len(args.keys) == len(args.order) == len(set(args.keys)), "expected distinct trial keys for each axis")
             selected = {key: reads[key] for key in args.keys}
             project(meta, selected, reference["symbols"])
             pair = list(selected.values())

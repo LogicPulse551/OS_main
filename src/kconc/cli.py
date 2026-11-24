@@ -417,6 +417,9 @@ def main(argv=None):
     iio = sub.add_parser('iio', help='Identify and compare normal IIO reads from saved captures')
     iio.add_argument('action', choices=('discover', 'verify', 'negative'))
     iio.add_argument('arguments', nargs=argparse.REMAINDER)
+    ram = sub.add_parser('ram-regmap', help='Search, inspect and replay a private RAM regmap case')
+    ram.add_argument('action', choices=('actors', 'inspect', 'exercise', 'replay'))
+    ram.add_argument('arguments', nargs=argparse.REMAINDER)
     sub.add_parser('commands', help='List implemented operations and explicit unsupported capabilities')
     validate = sub.add_parser('validate', help='Validate a runtime task manifest offline')
     validate.add_argument('manifest', type=Path)
@@ -451,12 +454,24 @@ def main(argv=None):
     opt.add_argument('--output', required=True, type=Path, help='new directory outside both source trees')
     try:
         args = parser.parse_args(argv)
+        if args.command == 'ram-regmap':
+            if args.action == 'actors':
+                from .actor_run import main as actor_main
+                return actor_main(args.arguments)
+            if args.action == 'inspect':
+                from .regmap_three_check import main as inspect
+                return inspect(args.arguments)
+            scripts = {'exercise': 'regmap-three-run.py', 'replay': 'regmap-central/replay.py'}
+            return subprocess.run([sys.executable, '-B', str(REPO / 'scripts' / scripts[args.action]),
+                                   *args.arguments]).returncode
         if args.command == 'iio':
             from .iio_path import main as iio_main
             return iio_main([args.action, *args.arguments])
         if args.command == 'commands':
             value = {'schema_version': 1, 'kind': 'kconc.catalog', 'operations': CATALOG,
-                     'source_commands': {'optimize': 'Discover and certify six-byte regmap reads in a Linux source tree'},
+                     'source_commands': {'optimize': 'Discover and certify supported regmap bulk reads',
+                                         'ram-regmap': 'Search operation orders, inspect three-worker traces and replay registered cases',
+                                         'iio': 'Discover and verify per-axis read paths in matching kernel captures'},
                      'scope': 'Runtime adapters, not a copy of the external development task status'}
             code = 0
         elif args.command == 'optimize':

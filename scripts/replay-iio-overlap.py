@@ -1,4 +1,4 @@
-"""Run one registered software SPI read pair, or check a saved pair offline."""
+"""Run registered IIO reads on a software SPI board, or check a saved capture."""
 import argparse
 import hashlib
 import json
@@ -70,12 +70,31 @@ def main():
     try:
         pkg = read(package_file)
         registered = read(reference)
-        order = pkg["pair"]["axis_order"]
         natural_ref = read(natural)
-        if order not in ("XY", "YX") or natural_ref["order"] != order:
-            raise ValueError("package and natural reference must identify the same axis order")
-        if (not pkg["pair"]["initrd_plan"] or pkg["pair"]["guest_mode"] != "natural" or
-                natural_ref["phase"] != "passive" or natural_ref["strict_matches"] != 1):
+        triple = "triple" in pkg
+        if triple:
+            plan = pkg["triple"]
+            order = "X{Y,Z}"
+            review = REVIEW.with_name("three.py")
+            hits = [row["pair"] for row in natural_ref["pairs"] if row["strict_window"]]
+            if ("pair" in pkg or plan["axis_owner"] != "X" or plan["peer_axes"] != ["Y", "Z"]
+                    or not hits or hits[0] != natural_ref["first_match"]
+                    or natural_ref["reference_sha256"] != digest(reference)
+                    or natural_ref["board_build_id"] != registered["identity"]["board_build_id"]
+                    or natural_ref["kernel_build_id"] != pkg["kernel_build_id"]
+                    or natural_ref["active_attempts"] != 0 or not natural_ref["passed"]):
+                raise ValueError("three-reader plan differs from the observed X window")
+            mode_args = ["active"]
+            selector = ["--pair", hits[0]]
+        else:
+            plan = pkg["pair"]
+            order = plan["axis_order"]
+            review = REVIEW
+            mode_args = []
+            selector = ["--order", order]
+            if order not in ("XY", "YX") or natural_ref["order"] != order or natural_ref["strict_matches"] != 1:
+                raise ValueError("package and unique natural reference must identify the same axis order")
+        if not plan["initrd_plan"] or plan["guest_mode"] != "natural" or natural_ref["phase"] != "passive":
             raise ValueError("missing registered software-board plan or passive reference")
         if digest(reference) != pkg["observation"]["registry_sha256"] or any(
                 registered["identity"][k] != pkg[k] for k in
@@ -85,17 +104,19 @@ def main():
         write(out / "plan.json", {"operation": result["operation"], "order": order, "capture": str(capture),
                                   "files": {str(f): digest(f) for f in
                                             (package_file, reference, natural, CAPTURE,
-                                             REVIEW, REVIEW.with_name("inspect_overlap.py"))}})
+                                             review, review.with_name("inspect_overlap.py"))}})
         if not args.check_only:
             rc = command(out, "launch", [sys.executable, "-B", CAPTURE, "boot", package,
-                                          pkg["pair"]["guest_mode"], capture])
+                                          plan["guest_mode"], capture])
             if rc:
                 raise ValueError(f"capture exited {rc}; see launch.log")
-        verify = [sys.executable, "-B", REVIEW, "--capture", capture, "--package", package_file,
-                  "--natural", natural, "--reference", reference, "--order", order]
+        verify = [sys.executable, "-B", review, *mode_args, "--capture", capture, "--package", package_file,
+                  "--natural", natural, "--reference", reference, *selector]
         if command(out, "verify", [*verify, "--out", out / "verdict.json"]):
             raise ValueError("path verification failed; see verdict.json and verify.log")
-        if command(out, "negative", [*verify, "--negative", "--out", out / "negative.json"]):
+        if triple:
+            write(out / "negative.json", read(out / "verdict.json")["negative"])
+        elif command(out, "negative", [*verify, "--negative", "--out", out / "negative.json"]):
             raise ValueError("offline rejection checks failed; see negative.json and negative.log")
         result.update(passed=True, boot_id=read(out / "verdict.json")["boot_id"])
     except (OSError, KeyError, TypeError, ValueError) as exc:

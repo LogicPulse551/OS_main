@@ -48,6 +48,64 @@ python3 -B scripts/replay-iio-overlap.py --package "$REPLAY_PACKAGE" \
 
 每次执行都会冷启动一套来宾。`verdict.json` 给出进入驱动、提交、开始和完成传输的实际事件，以及两次读取的结果。`negative.json` 记录三个改错中间证据的对照。已有原始记录时，在同一命令中加 `--check-only "$SAVED_SLOT"` 并更换输出目录，即可离线复核。
 
+### 三轴读取重放
+
+沿用上述普通软件板和工具链。先单独采集 X、Y、Z，再从一次新启动验证完整读取的顺序。使用构建说明中准备好的 `W` 和 `LINUX`。
+
+```bash
+cap=(python3 -B scripts/iio-path/capture.py)
+"${cap[@]}" boot "$W/plain" train3 "$W/train3"
+python3 -B kconc.py iio discover --capture "$W/train3" --out "$W/axes3.json"
+"${cap[@]}" boot "$W/plain" ordered3 "$W/ordered3"
+python3 -B kconc.py iio verify --reference "$W/axes3.json" --capture "$W/ordered3" \
+  --order XYZ --keys xyz1 xyz2 xyz3 --out "$W/xyz.json"
+python3 -B kconc.py iio verify --reference "$W/axes3.json" --capture "$W/ordered3" \
+  --order ZYX --keys zyx1 zyx2 zyx3 --out "$W/zyx.json"
+python3 -B scripts/iio-path/markers.py "$W/plain" "$W/axes3.json" "$LINUX" "$W/markers3"
+"${cap[@]}" boot "$W/markers3" natural3 "$W/natural3"
+python3 -B scripts/iio-path-overlap/checks/three.py passive --capture "$W/natural3" \
+  --package "$W/markers3/package.json" --reference "$W/axes3.json" --out "$W/observed3.json"
+```
+
+`first_match` 指向普通板上第一个满足条件的组：Y、Z 均在 X 的 SPI 提交与开始传输之间进入驱动。若为空，这一批只记作自然观察。取得参考后，用同一内核构建的 `board-build` 收据封装主动包。若尚未生成该收据，直接从普通包运行下面的第一条命令。已有该收据时，从第二条开始。
+
+```bash
+python3 -B scripts/iio-path-overlap/build_board.py "$W/plain/package.json" \
+  "$W/overlap-board" "$W/board-build" "$LLVM_BIN"
+python3 -B scripts/iio-path-overlap/checks/prepare_three.py "$W/markers3" "$W/board-build" "$W/active3"
+python3 -B scripts/replay-iio-overlap.py --package "$W/active3" --reference "$W/axes3.json" \
+  --natural "$W/observed3.json" --out "$W/replayed3"
+```
+
+## 三线程寄存器更新
+
+使用[构建说明](BUILDING.md#三线程寄存器更新的运行包)中的原内核构建身份、模块收据和只读盘。以下搜索运行三个线程各置位、清位一次的全部 90 种顺序，记录第一次超过两位同时占用的位置。下一条命令在新来宾中重放整批，与每一步的读写核对。
+
+```bash
+actors=(python3 -B kconc.py ram-regmap actors --build "$W/actor-module/receipt.json" --disk "$DISK")
+"${actors[@]}" --threads 3 --max-switches 5 --budget 90 --max-active 2 --out "$RUNS/search"
+"${actors[@]}" --replay "$RUNS/search" --out "$RUNS/search-replay"
+```
+
+更新丢失和互斥违例使用各自的原始与修复构建。以下命令运行两组性质对照，再把指定来宾串口中的一段执行整理成 HTML 见证。
+
+```bash
+python3 -B kconc.py ram-regmap exercise "$W/profiles.json" "$W/packages" "$RUNS/three-workers"
+python3 -B kconc.py ram-regmap inspect "$RUNS/three-workers/mutex-base/reference/serial.log" \
+  --property mutex --variant fault --order ACB --html-dir "$RUNS/witness"
+```
+
+## 在 Ubuntu 内核上重放操作交接
+
+使用[Ubuntu 运行包](BUILDING.md#ubuntu-测试内核)。一次短测启动五个独立来宾，为 ABA、ABCA 各取参考并各重放一次，最后故意放错第三步。正式批共 43 次独立启动，两条正常路径各 1 次参考、20 次确认，另做 1 次错序对照。每条路径的门槛均为 20 次中至少 19 次完整匹配。
+
+```bash
+python3 -B kconc.py ram-regmap replay --package "$W/ubuntu-package" --output "$RUNS/ubuntu-smoke" --smoke
+python3 -B kconc.py ram-regmap replay --package "$W/ubuntu-package" --output "$RUNS/ubuntu-formal"
+```
+
+从 `summary.json` 查看逐批结果，从各目录的 `serial.log` 查看协调者、工作线程及实际 regmap 读写。A→B→C→A 中的两个 A 属于同一工作线程的两次调用。
+
 ## 从原始执行生成源码报告
 
 `BUNDLE` 指向完整见证目录，`BUILD_RECORD` 指向匹配的源码构建清单 JSON，`SOURCE_ROOT` 指向该次内核源码树或快照的根目录。请先把三个变量设为本机的实际路径。

@@ -69,25 +69,27 @@ static void *read_axis(void *argument)
     return NULL;
 }
 
-/* Sequential pairs hold the next operation until the first returns. In
- * parallel mode both workers rendezvous before either begins its sysfs read. */
+/* Sequential readers finish one at a time. Parallel readers meet at one
+ * barrier before entering sysfs; the kernel decides their subsequent order. */
 int main(int argc, char **argv)
 {
-    if (argc != 7 || (strcmp(argv[2], "seq") && strcmp(argv[2], "parallel"))) return 2;
+    if ((argc != 7 && argc != 9) || (strcmp(argv[2], "seq") && strcmp(argv[2], "parallel"))) return 2;
+    int count = (argc - 3) / 2;
     pthread_barrier_t barrier;
     int parallel = !strcmp(argv[2], "parallel");
-    if (parallel && pthread_barrier_init(&barrier, NULL, 2)) return 1;
-    pthread_t threads[2];
-    struct operation operations[2];
-    for (int i = 0; i < 2; i++) {
+    if (parallel && pthread_barrier_init(&barrier, NULL, count)) return 1;
+    pthread_t threads[3];
+    struct operation operations[3];
+    for (int i = 0; i < count; i++) {
         const char *axis = argv[4 + 2*i];
-        if (strcmp(axis, "X") && strcmp(axis, "Y")) return 2;
+        if (strlen(axis) != 1 || !strchr("XYZ", *axis)) return 2;
         operations[i] = (struct operation){argv[1], argv[3 + 2*i], *axis, parallel ? &barrier : NULL};
         if (pthread_create(&threads[i], NULL, read_axis, &operations[i])) return 1;
         if (!parallel && pthread_join(threads[i], NULL)) return 1;
     }
     if (parallel) {
-        if (pthread_join(threads[0], NULL) || pthread_join(threads[1], NULL)) return 1;
+        for (int i = 0; i < count; i++)
+            if (pthread_join(threads[i], NULL)) return 1;
         pthread_barrier_destroy(&barrier);
     }
     return 0;
