@@ -1,5 +1,7 @@
 # kconc · Linux 内核并发检错与可信优化
 
+在 x86_64 Linux 上克隆本仓库，进入项目后运行 `./start.sh`。菜单可以看离线演示、在本机实跑一个案例、按原判据复现代表成果，或安装工具测试自己的驱动。首次启动虚拟机时，脚本自动获取并校验 openEuler 官方系统映像，之后各案例共用缓存。离线演示和纯工具安装可直接使用仓库中的内容。[教师端运行速查](docs/RUNNING.md#教师入口)
+
 两个线程各给寄存器设置一位，为什么最后只留下一位？打上补丁后，怎样确认测试又走到了那组交错？kconc 在 openEuler 实验环境中支持重放 KX022A 和 BMA400 原生驱动的三线程读取交错，并已将寄存器更新路径的重放扩展到 Ubuntu 测试内核，可逐步核对三个线程对同一寄存器的读写。可信优化部分用 BMA400 验证了跳过空转换的正确性和实际收益。
 
 ## 团队做了哪些探索
@@ -65,13 +67,12 @@ Ubuntu 使用 24.04 LTS 的 `linux 6.8.0-31.31` 源码包和项目测试配置�
 
 ## 开始使用
 
-从仓库根目录运行以下命令可查看入口。Python 需要 3.11 或更新版本。
+克隆后进入仓库目录，运行教师菜单。推荐使用 Ubuntu 24.04 或 Debian 13。
 
 ```bash
-python3 -B kconc.py --help
-python3 -B kconc.py commands
+./start.sh
 ```
 
-已有离线演示材料时，解压后用浏览器打开 `demo/index.html`。要从原始记录重新计算表格并生成页面，使用材料中的 `kit/bundle.json`。演示材料、镜像和完整运行档案单独提供。要运行真实内核，使用 WSL Debian、QEMU/KVM x86_64、openEuler 24.03 LTS SP3 用户空间和锁定的实验内核。[运行说明](docs/RUNNING.md) · [环境与构建](docs/BUILDING.md)
+看报告时选第一项。要启动真实内核，使用支持 KVM 的 x86_64 Linux，首次联网取得系统映像。每次实跑都会留下独立报告。[运行说明](docs/RUNNING.md) · [环境与构建](docs/BUILDING.md)
 
 MAccConc 提供调度与轨迹基础，使用 Apache-2.0。Linux 与 LLVM 按对应源码许可分发。SEQ 派生的证明保留原 MIT 声明。PromisingComp 原工件及部分证明依赖的再分发许可尚未完整确认，需单独取得。项目提供 regmap 场景、性质判据、构建身份核对、局部规则、证据检查和演示页面。[MAccConc 及工具链版本锁](configs/maccconc.lock.json) · [SEQ 许可](proofs/seq/UPSTREAM-LICENSE) · [PromisingComp 原工件](https://plax-lab.github.io/publications/promisingcomp/)

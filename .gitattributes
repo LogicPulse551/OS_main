@@ -3,5 +3,6 @@
 *.sh text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+*.gz binary -delta
 # Unified-diff blank context lines require a literal leading space.
 *.patch text eol=lf whitespace=-blank-at-eol

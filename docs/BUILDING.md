@@ -206,3 +206,9 @@ cmp configs/optimization/sixbyte-x86_64.config "$BUILD/.config"
 PromisingComp 与 SEQ 使用各自独立的 opam 环境。前者锁定 Coq 8.13.1、OCaml 4.12.1 和 Paco 4.0.4，后者锁定 Coq 8.15.0、OCaml 4.14.2、Paco 4.1.2 和 ITree 4.0.0。驱动提供源码核验、完整构建、`coqchk` 与原算法的输入输出示例。[依赖锁](../configs/optimization/) · [驱动](../scripts/optimization/) · [证明工件](../proofs/)
 
 MAccConc 使用 Apache-2.0，ImGui 使用 MIT，LLVM 使用带 LLVM 例外的 Apache-2.0，Linux 按源码文件许可分发。SEQ 派生证明保留 MIT 许可。PromisingComp 原工件及部分证明依赖的再分发条件尚未完整确认。CompCert、原论文工件、镜像和工具链须从各自来源取得并遵守对应许可。[上游来源](../configs/maccconc.lock.json) · [SEQ 原许可](../proofs/seq/UPSTREAM-LICENSE) · [CompCert 来源与版本](../proofs/bma400-noop/compcert-runtime.json)
+## 教师入口的材料与身份校验
+
+`configs/teacher-delivery.json` 绑定各案例的内核、模块、判据和系统映像。案例所需内容从本次检出的 `share/kconc/objects` 按需展开，压缩块和恢复后的每份文件都按登记的 SHA-256 核对。系统盘单独从 openEuler 官方发行镜像取得；入口校验压缩及解压后的文件，来宾使用配套实验内核。Ubuntu 案例使用 Ubuntu 24.04 测试内核和同一套 openEuler 用户空间。
+
+BMA400 局部证书使用 Coq 8.15.0 和 CompCert 3.13。教师从菜单选择后，脚本定位配套版本并重新编译证书。相关源码与许可证随配套工具提供。运行正式计时还需要四个空闲 CPU 和 KVM。
+
