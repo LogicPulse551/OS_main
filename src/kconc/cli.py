@@ -215,6 +215,10 @@ def json_object(path):
 
 
 def run_live(task, out, envelope):
+    if task['operation'] == 'native.regmap-two-prelock':
+        from .native_regmap_two_prelock import run
+        run(task, out, envelope)
+        return
     if task['operation'] in {'artifact.check', 'artifact.loaded'}:
         from .artifacts import dispatch
         dispatch(task, out, envelope)

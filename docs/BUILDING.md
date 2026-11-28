@@ -206,9 +206,32 @@ cmp configs/optimization/sixbyte-x86_64.config "$BUILD/.config"
 PromisingComp 与 SEQ 使用各自独立的 opam 环境。前者锁定 Coq 8.13.1、OCaml 4.12.1 和 Paco 4.0.4，后者锁定 Coq 8.15.0、OCaml 4.14.2、Paco 4.1.2 和 ITree 4.0.0。驱动提供源码核验、完整构建、`coqchk` 与原算法的输入输出示例。[依赖锁](../configs/optimization/) · [驱动](../scripts/optimization/) · [证明工件](../proofs/)
 
 MAccConc 使用 Apache-2.0，ImGui 使用 MIT，LLVM 使用带 LLVM 例外的 Apache-2.0，Linux 按源码文件许可分发。SEQ 派生证明保留 MIT 许可。PromisingComp 原工件及部分证明依赖的再分发条件尚未完整确认。CompCert、原论文工件、镜像和工具链须从各自来源取得并遵守对应许可。[上游来源](../configs/maccconc.lock.json) · [SEQ 原许可](../proofs/seq/UPSTREAM-LICENSE) · [CompCert 来源与版本](../proofs/bma400-noop/compcert-runtime.json)
+
 ## 教师入口的材料与身份校验
 
 `configs/teacher-delivery.json` 绑定各案例的内核、模块、判据和系统映像。案例所需内容从本次检出的 `share/kconc/objects` 按需展开，压缩块和恢复后的每份文件都按登记的 SHA-256 核对。系统盘单独从 openEuler 官方发行镜像取得；入口校验压缩及解压后的文件，来宾使用配套实验内核。Ubuntu 案例使用 Ubuntu 24.04 测试内核和同一套 openEuler 用户空间。
 
 BMA400 局部证书使用 Coq 8.15.0 和 CompCert 3.13。教师从菜单选择后，脚本定位配套版本并重新编译证书。相关源码与许可证随配套工具提供。运行正式计时还需要四个空闲 CPU 和 KVM。
 
+BMA400、ADS7828 与 INA219 的软件 I2C 环境各自登记配套内核、驱动或模块、适配器及其判据。各设备分别加载自己的软件适配器，普通读取走原生驱动。时间线把两名读者与同一笔总线请求对应，在同一来宾时钟上核对等待与应答。判读 INA219 时同时保留 hwmon 公共入口和原生驱动入口。仓库中的离线演示可以直接查看这三款设备的归档轨迹。
+
+私有 RAM regmap 的锁前重放使用保留默认锁的派生实验内核及其配套执行器。反向案例需要 KVM、e2fsprogs 和可供来宾使用的 4 GiB 内存。它保留高精度来宾定时器，四个 vCPU 分别绑定到宿主逻辑 CPU 2、4、6、8。这四个编号需各属一个物理核心，当前账户还需能使用至少一个其他逻辑 CPU 来运行 QEMU 辅助线程。报告保存每次启动的身份和实际放行位置。[运行速查](RUNNING.md#教师入口)
+
+### 核对锁前测试对象的源码
+
+菜单使用预构建内核，build ID 为 `3f8e2263798cf38787636c757001b7454df7139a`。要查看它相对项目原有寄存器更新构建的改动，可在一份独立的实验内核源码副本上还原。起点是项目的双线程 RMW 实验源码（对应 build ID `91b4f261e68489d0df9f8404db70e696e4550e4a`），其中已包含项目私有的 `kconc-regmap.c` 和 `kconc-regmap.h`。[实验构建脚本](../scripts/build-k10-kernel.py) · [原有测试对象](../kernel/k06/) · [配套头文件及两份补丁](../kernel/regmap-prelock/)
+
+在项目根目录操作，将 `KERNEL_COPY` 设为该实验源码副本的绝对路径。第一份补丁和头文件还原正常更新接口，第二份只给私有 RAM 对象登记锁前回调；更新仍由内核原有的锁保护。
+
+```sh
+PARTS="$PWD/kernel/regmap-prelock"
+REGMAP="$KERNEL_COPY/drivers/base/regmap"
+install -m 0644 "$PARTS/kconc-regmap-normal.h" "$REGMAP/"
+git -C "$KERNEL_COPY" apply --check "$PARTS/01-normal-abi.patch"
+git -C "$KERNEL_COPY" apply "$PARTS/01-normal-abi.patch"
+git -C "$KERNEL_COPY" apply --check "$PARTS/02-private-prelock.patch"
+git -C "$KERNEL_COPY" apply "$PARTS/02-private-prelock.patch"
+sha256sum "$REGMAP/kconc-regmap.c"
+```
+
+实际构建使用的 `kconc-regmap.c` 的 SHA-256 为 `7d3094f202cc8c19bab87671c07fb987252ff47a97228c1f022a3d9f821f690d`。

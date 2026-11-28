@@ -17,6 +17,10 @@ from typing import Any
 MAX_MANIFEST_BYTES = 64 * 1024
 
 CATALOG = {
+    "native.regmap-two-prelock": {
+        "supported": True, "project_task": "MT02",
+        "scope": "Observe a default-lock update on a private RAM regmap, with the registered BA role binding.",
+    },
     "env.status": {
         "supported": True, "project_task": "R00",
         "scope": "Current VM state only; not KCOV, ABI, or VSOCK verification.",
@@ -145,6 +149,7 @@ _HOST_RUNTIME_PATHS = {"lab_dir", "build_lab", "kernel_build"}
 _GUEST_RUNTIME_PATHS = {"probe_guest_build", "scenario_guest_build", "lifecycle_guest_build", "regmap_guest_build", "rmw_guest_build", "mutex_guest_build", "sample_guest_build", "search_guest_build"}
 _RUNTIME_KEYS = _HOST_RUNTIME_PATHS | _GUEST_RUNTIME_PATHS | {"ssh_port"}
 _INPUT_KEYS = {
+    "native.regmap-two-prelock": {"bundle", "disk"},
     "result.read": {"result"},
     "report.trace": {"bundle", "source_root", "build_record"},
     "optimize.bma400": {"kernel_tree", "config", "clang", "compcert", "coq_bin"},
@@ -405,9 +410,9 @@ def normalize_manifest(obj: Any, base: Path) -> dict:
             _invalid("name must be a string of at most 100 characters")
     runtime = _object(obj.get("runtime", {}), "runtime")
     inputs = _object(obj.get("inputs", {}), "inputs")
-    _unknown_keys(runtime, _RUNTIME_KEYS, "runtime")
+    _unknown_keys(runtime, set() if operation == "native.regmap-two-prelock" else _RUNTIME_KEYS, "runtime")
     allowed_inputs = _INPUT_KEYS.get(operation, set())
-    optional_inputs = {"report.trace": {"attempt"}, "optimize.bma400": {"expect_certificate"}}.get(operation, set())
+    optional_inputs = {"native.regmap-two-prelock": {"reference"}, "report.trace": {"attempt"}, "optimize.bma400": {"expect_certificate"}}.get(operation, set())
     _unknown_keys(inputs, allowed_inputs | optional_inputs, "inputs")
     missing_runtime = _REQUIRED_RUNTIME.get(operation, set()) - runtime.keys()
     if missing_runtime:

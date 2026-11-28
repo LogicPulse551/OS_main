@@ -16,6 +16,10 @@ def preflight(case, vm, install=False, offline=False):
         if not os.access("/dev/kvm", os.R_OK | os.W_OK):
             raise ValueError("当前用户需要能读写 /dev/kvm。请在主机启用虚拟化并授予当前账户 KVM 访问权限。")
         commands.update({"qemu-system-x86_64":"qemu-system-x86", "qemu-img":"qemu-utils"})
+    if case.endswith("-i2c") or case == "ram-prelock":
+        commands.update({"/usr/sbin/mkfs.ext4": "e2fsprogs", "/usr/sbin/debugfs": "e2fsprogs"})
+    if case.endswith("-i2c"):
+        commands["addr2line"] = "binutils"
     if case in ("opt-ram", "quick-opt"):
         if not os.access("/dev/vhost-vsock", os.R_OK | os.W_OK):
             raise ValueError("性能实验需要当前用户能读写 /dev/vhost-vsock。")

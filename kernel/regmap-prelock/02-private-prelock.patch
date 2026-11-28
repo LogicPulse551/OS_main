@@ -1,0 +1,80 @@
+diff --git a/drivers/base/regmap/internal.h b/drivers/base/regmap/internal.h
+--- a/drivers/base/regmap/internal.h
++++ b/drivers/base/regmap/internal.h
+@@ -63,6 +63,11 @@
+ 	regmap_lock lock;
+ 	regmap_unlock unlock;
+ 	void *lock_arg; /* This is passed to lock/unlock functions */
++
++#ifdef CONFIG_KCONC_REGMAP_TEST
++	int (*kconc_prelock)(struct regmap *map, void *data);
++	void *kconc_prelock_data;
++#endif
+ 	gfp_t alloc_flags;
+ 	unsigned int reg_base;
+ 
+diff --git a/drivers/base/regmap/kconc-regmap.c b/drivers/base/regmap/kconc-regmap.c
+--- a/drivers/base/regmap/kconc-regmap.c
++++ b/drivers/base/regmap/kconc-regmap.c
+@@ -36,6 +36,9 @@
+ 	struct kconc_regmap_role roles[KCONC_REGMAP_NORMAL_ROLES];
+ };
+ 
++static noinline int kconc_regmap_checkpoint(struct kconc_regmap_role *role, u32 epoch);
++static noinline int kconc_regmap_prelock(struct regmap *map, void *data);
++
+ static const struct regmap_config kconc_map_config = {
+ 	.reg_bits = 32,
+ 	.val_bits = 32,
+@@ -68,6 +71,25 @@
+ 	/* regmap_exit() now owns ram and all three of its arrays. */
+ 	ctx->ram = ram;
+ 	ctx->map = map;
++	ctx->map->kconc_prelock = kconc_regmap_prelock;
++	ctx->map->kconc_prelock_data = ctx;
++	return 0;
++}
++
++static noinline int kconc_regmap_prelock(struct regmap *map, void *data)
++{
++	struct kconc_regmap_context *ctx = data;
++	pid_t pid = task_pid_nr(current);
++	unsigned int i;
++
++	if (!ctx || ctx->map != map)
++		return 0;
++	for (i = 0; i < ARRAY_SIZE(ctx->roles); i++) {
++		struct kconc_regmap_role *role = &ctx->roles[i];
++		if (role->started && !role->completed && role->pid == pid &&
++		    role->mode == KCONC_REGMAP_MODE_UPDATE_BITS)
++			return kconc_regmap_checkpoint(role, ctx->epoch);
++	}
+ 	return 0;
+ }
+ 
+@@ -231,6 +253,7 @@
+ 		goto reject;
+ 	}
+ 	role->started = 1;
++	role->pid = task_pid_nr(current);
+ 	role->status = -EINPROGRESS;
+ 	role->reg = request.reg;
+ 	role->mode = request.mode;
+diff --git a/drivers/base/regmap/regmap.c b/drivers/base/regmap/regmap.c
+--- a/drivers/base/regmap/regmap.c
++++ b/drivers/base/regmap/regmap.c
+@@ -3310,6 +3310,14 @@
+ {
+ 	int ret;
+ 
++#ifdef CONFIG_KCONC_REGMAP_TEST
++	if (map->kconc_prelock) {
++		ret = map->kconc_prelock(map, map->kconc_prelock_data);
++		if (ret)
++			return ret;
++	}
++#endif
++
+ 	map->lock(map->lock_arg);
+ 
+ 	map->async = async;

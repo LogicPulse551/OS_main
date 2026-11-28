@@ -61,6 +61,7 @@ def populate(staging, mode):
     copy("src/kconc/__init__.py")
     if "detect" in components:
         copy("src/kconc/iio_path.py")
+        copy("src/kconc/i2c_capture.py")
         put("share/kconc/read_axes.c", (ROOT / "scripts/iio-path/read_axes.c").read_bytes())
         subset("regmap_oracle", "", "U32 ORACLE uint vector validate_inputs apply_update evaluate")
         subset("mutex_oracle", "", "U32 ORACLE EVENT_FIELDS uint require evaluate")

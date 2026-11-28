@@ -2,37 +2,42 @@
 
 ## 教师入口
 
-克隆仓库后进入项目目录，运行：
+在项目目录运行 `./start.sh`，按菜单选一种用法。
 
-```sh
-./start.sh
-```
+| 入口 | 准备与操作 | 打开后能看到什么 |
+| --- | --- | --- |
+| 看已有演示 | 直接打开第一项，离线可用 | 从“应读到 3、实际只剩 1”追到覆盖前一次更新的写入，查看修复记录。驱动时间线可分别查看 SPI、I2C 和 hwmon 的交接，另附三线程、Ubuntu 和 BMA400 优化记录。 |
+| 在本机快速复现 | 在支持 KVM 的 x86_64 Linux 选择一项案例 | 默认核对更新丢失与修复。也可实跑 BMA400 I2C 双轴、Ubuntu 操作交接或可信优化，打开当次报告查看。 |
+| 复现一组代表实验 | 在菜单中选实验，如 BMA400 I2C、ADS7828、INA219 或 RAM 默认锁前交接 | 在配套内核中按该实验的判据运行，把本机完整匹配数与归档分开，保留每次执行的结果。 |
+| 装工具测试自己的驱动 | 选择仅并发检错、仅可信优化或整套 | 在用户目录得到相应命令，用自己的记录核对线程路径，或在自己的源码目录扫描优化候选。 |
 
-| 菜单 | 老师会看到什么 |
-| --- | --- |
-| 查看已有离线演示 | 在浏览器查看已归档的线程读写、源码和修复回执。离线可用。 |
-| 在本机快速复现 | 默认在真实内核中核对一次更新丢失与修复。也可选 Ubuntu 的操作交接或 BMA400 六字节读取。每次运行生成单独的报告。 |
-| 按冻结条件复现代表成果 | 选择寄存器性质、两款原生 SPI 驱动的读取、Ubuntu 操作重放、BMA400 计时或局部证书。报告分别列出本次和历史结果。 |
-| 安装工具测试自己的驱动 | 选择仅并发检错、仅可信优化或整套。工具写入用户目录，按自己的设备、采样记录或驱动源码使用。 |
-
-推荐主机为 Ubuntu 24.04 或 Debian 13 的 x86_64 Linux。执行虚拟机案例时，当前账户需要能读写 `/dev/kvm`。首次会从镜像站下载约 1.04 GB 的 openEuler 映像，脚本验证压缩文件和解压后的磁盘，并只在独立的临时环境里运行。随后可用 `--offline` 复现同一案例。纯工具安装和看报告可以从空缓存离线开始。BMA400 的性能实验需要四个空闲 CPU 与可读写的 `/dev/vhost-vsock`。证明入口按需展开仓库内登记的 Coq 与 CompCert。
-
-安装纯工具后，运行 `bin/kconc scan` 可直接扫描自己的驱动代码。运行 `bin/kconc optimize` 时提供自己的内核源码、Kbuild 构建目录和配置。工具核对实际编译命令并按需准备证明器。若移动了仓库，可通过 `KCONC_PROJECT` 指向新位置。
-
-交互菜单会列出所选功能缺少的主机软件并征求安装许可；已有依赖时直接运行。首次应为下载、解压及运行记录在用户目录预留空间。可用 `XDG_CACHE_HOME` 和 `XDG_STATE_HOME` 分别指定缓存和结果目录。
-
-用于脚本调用的等效命令：
+命令行可以直接选案例：
 
 ```sh
 ./start.sh demo --offline
 ./start.sh quick update
+./start.sh quick bma-i2c
+./start.sh reproduce bma-i2c
+./start.sh reproduce ads-i2c
+./start.sh reproduce ina-i2c
+./start.sh reproduce ram-prelock
 ./start.sh quick ubuntu
 ./start.sh quick opt
-./start.sh reproduce opt-proof
 ./start.sh tools all
 ```
 
-每次内核运行后，打开入口打印的 `index.html` 查看本机结果与原始记录。早期双线程 159/160 次重放与 40/40 次修复回归保存在历史演示里。
+**读报告时看哪一行？** 在 BMA400、ADS7828 的 I2C 报告里，依次找到同一笔请求的等待回执、第二线程的原生驱动入口和第一笔应答。INA219 看的是第二线程进入 hwmon 公共入口。在 RAM 锁前用例里，沿参考中的放行和等待查两个线程的读写，分别核对每次返回与独立读回。菜单打印的结果目录包含本次报告和执行记录。
+
+主机推荐 Ubuntu 24.04 或 Debian 13。虚拟机案例需要可读写的 `/dev/kvm`。需要 openEuler 系统盘的案例首次联网获取约 1.04 GB 压缩映像，校验后复用缓存。离线演示和纯工具安装均可从空缓存启动。BMA400 性能实验另需四个空闲 CPU 和可读写的 `/dev/vhost-vsock`。RAM 锁前冷重放使用固定宿主 CPU 布局，见[构建与环境](BUILDING.md#教师入口的材料与身份校验)。菜单会提示缺少的主机软件。缓存和结果目录可分别用 `XDG_CACHE_HOME`、`XDG_STATE_HOME` 指定。
+
+安装纯工具后，在安装目录可以用 `bin/kconc check-i2c` 离线比较自己的两份读取记录。每份输入均为含有 `ops.tsv` 和配套轨迹的 IIO 或 hwmon 采样目录。为参考和这次采样各选两个操作，将表中对应的 key 按顺序填入命令。报告核对构建身份、线程对应的 regmap 读操作、总线请求和应答。
+
+```sh
+bin/kconc check-i2c --reference "$REF_CAPTURE" --reference-keys "$REF_FIRST" "$REF_SECOND" \
+  --capture "$NEW_CAPTURE" --keys "$NEW_FIRST" "$NEW_SECOND" --out result.json
+```
+
+优化工具的 `bin/kconc scan` 扫描驱动源码，`bin/kconc optimize` 接受内核源码、Kbuild 输出和配置，按需准备对应证明环境。移动克隆目录后可通过 `KCONC_PROJECT` 指向新位置。
 
 在仓库根目录用 Bash 和 Python 3.11 或更新版本运行。先准备在仓库外保存结果的父目录。每次 `--output` 都要指向一个尚不存在的子目录。
 
@@ -44,7 +49,7 @@ python3 -B kconc.py commands
 
 ## 离线演示
 
-本版《离线演示.zip》解压后直接打开根目录 `index.html`。以下命令适用于另行取得的早期证据包。要校验那份归档、重新计算性能区间并生成报告，将 `KIT` 设为其中包含 `bundle.json` 的目录。
+运行 `./start.sh demo --offline`，打开入口显示的本地页面；分享时可复制整个演示目录。以下命令适用于另行取得的早期证据包。要校验那份归档、重新计算性能区间并生成报告，将 `KIT` 设为其中包含 `bundle.json` 的目录。
 
 ```bash
 KIT=/实际路径/kit

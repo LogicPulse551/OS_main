@@ -16,11 +16,16 @@ from materials import CATALOG, ROOT, digest, material, read_catalog
 from host import preflight
 
 QUICK = {"update": "三个线程更新同一寄存器 · 更新丢失与修复", "ubuntu": "Ubuntu 三线程完整操作交接",
-         "opt": "BMA400 六字节读取 · 核对数据与回调次数"}
+         "opt": "BMA400 六字节读取 · 核对数据与回调次数",
+         "bma-i2c": "BMA400 双读者 · 查看一次 I2C 应答前的交错"}
 FULL = {"properties": "三线程 regmap 更新丢失、互斥与修复对照", "iio-kx": "KX022A 双读者重放",
         "iio-bma": "BMA400 双读者重放", "opt-ram": "BMA400 六字节受控 RAM 计时",
         "opt-proof": "BMA400 局部正确性证书", "iio-three-kx": "KX022A 三读者重放",
-        "iio-three-bma": "BMA400 三读者重放", "ubuntu": "Ubuntu 双／三线程操作级重放"}
+        "iio-three-bma": "BMA400 三读者重放", "ubuntu": "Ubuntu 双／三线程操作级重放",
+        "bma-i2c": "BMA400 · I2C 读轴与驱动内重叠",
+        "ads-i2c": "ADS7828 · hwmon 双通道与驱动内重叠",
+        "ina-i2c": "INA219 · hwmon 双通道与公共入口重叠",
+        "ram-prelock": "RAM regmap · 双线程在加锁前交接"}
 INSTALL = {"detect": "仅并发检测", "optimize": "仅可信优化", "all": "整套工具"}
 
 
@@ -92,7 +97,7 @@ def overview(dest, name, catalog, case, rc, error):
     links = "".join(f'<li><a href="{quote(p)}">{html.escape(p)}</a></li>' for p in records)
     primary = ""
     if "run/report.html" in records:
-        primary = '<p><a href="run/report.html">查看逐线程读写、终值与本次串口记录</a></p>'
+        primary = '<p><a href="run/report.html">查看本次线程时间线与运行记录</a></p>'
     for candidate in ("run/case_result.json", "run/result.json"):
         if candidate not in records:
             continue
@@ -101,8 +106,18 @@ def overview(dest, name, catalog, case, rc, error):
         actual = data.get("boots_started", data.get("attempted"))
         if planned is not None and actual is not None:
             primary += f'<p>计划 {html.escape(str(planned))}，本次尝试 {html.escape(str(actual))}。</p>'
+        if "window_matches" in data:
+            windows = sum(slot.get("phase") == "window" for slot in data["slots"])
+            primary += f'<p>应答窗口完整匹配 {data["window_matches"]}/{windows} 次。</p>'
+            ordered = sum(slot.get("phase") == "ordered" for slot in data["slots"])
+            if ordered:
+                directions = "，".join(f'{html.escape(direction)} {matched}/{ordered}' for direction, matched
+                                      in data["directions_matched"].items())
+                primary += f'<p>两个方向的完整读取分别匹配 {directions}。</p>'
         if "complete_matches" in data:
-            primary += f'<p>已核对独立来宾 {len(set(data.get("guest_boot_ids", [])))} 次，完整路径匹配 {data["complete_matches"]} 次。</p>'
+            count = data.get("guest_boot_ids")
+            boots = f"已核对独立来宾 {len(set(count))} 次，" if isinstance(count, list) else ""
+            primary += f'<p>{boots}完整路径匹配 {html.escape(str(data["complete_matches"]))} 次。</p>'
         if data.get("empty_callbacks"):
             counts = data["empty_callbacks"]
             primary += '<p>空回调次数（原版／只缓存指针／跳过已知空转换） ' + ' / '.join(html.escape(str(counts.get(k, "—"))) for k in ("original", "cached", "skip-noop")) + '。</p>'

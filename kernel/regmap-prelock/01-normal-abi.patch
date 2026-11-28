@@ -1,0 +1,152 @@
+--- a/drivers/base/regmap/kconc-regmap.c
++++ b/drivers/base/regmap/kconc-regmap.c
+@@ -22,7 +22,7 @@
+ #include <linux/uaccess.h>
+ 
+ #include "internal.h"
+-#include "kconc-regmap.h"
++#include "kconc-regmap-normal.h"
+ 
+ struct kconc_regmap_context {
+ 	struct mutex guard;
+@@ -32,7 +32,8 @@
+ 	u32 epoch;
+ 	u32 active;
+ 	u32 completed_mask;
+-	struct kconc_regmap_role roles[KCONC_REGMAP_ROLES];
++	u32 abi; /* Bound by reset while guard is held, for the life of this fd. */
++	struct kconc_regmap_role roles[KCONC_REGMAP_NORMAL_ROLES];
+ };
+ 
+ static const struct regmap_config kconc_map_config = {
+@@ -116,10 +117,15 @@
+ 
+ 	if (copy_from_user(&request, arg, sizeof(request)))
+ 		return -EFAULT;
+-	if (request.abi != KCONC_REGMAP_ABI || request.reserved ||
+-	    request.flags & ~KCONC_REGMAP_RESET_FAIL)
++	if ((request.abi != KCONC_REGMAP_ABI && request.abi != KCONC_REGMAP_NORMAL_ABI) ||
++	    request.reserved || request.flags & ~KCONC_REGMAP_RESET_FAIL ||
++	    (request.abi == KCONC_REGMAP_NORMAL_ABI && request.flags))
+ 		return -EINVAL;
+ 	mutex_lock(&ctx->guard);
++	if (ctx->abi && ctx->abi != request.abi) {
++		ret = -EINVAL;
++		goto out;
++	}
+ 	if (ctx->active) {
+ 		ret = -EBUSY;
+ 		goto out;
+@@ -132,6 +138,7 @@
+ 		ret = -EOVERFLOW;
+ 		goto out;
+ 	}
++	ctx->abi = request.abi;
+ 	/* A partially initialized/reset map is never made executable. */
+ 	ctx->state = KCONC_REGMAP_POISONED;
+ 	if (!ctx->map) {
+@@ -183,15 +190,29 @@
+ 	struct kconc_regmap_role *role;
+ 	unsigned int before = 0;
+ 	unsigned int after = 0;
++	unsigned int role_count;
+ 	int ret;
+ 
+ 	if (copy_from_user(&request, arg, sizeof(request)))
+ 		return -EFAULT;
+-	if (request.abi != KCONC_REGMAP_ABI || request.reserved ||
+-	    request.mode > KCONC_REGMAP_MODE_UPDATE_BITS ||
+-	    request.role >= KCONC_REGMAP_ROLES || request.reg >= KCONC_REGMAP_REGS)
++	if (request.abi == KCONC_REGMAP_NORMAL_ABI) {
++		if (request.mode != KCONC_REGMAP_MODE_UPDATE_BITS)
++			return -EINVAL;
++		role_count = KCONC_REGMAP_NORMAL_ROLES;
++	} else if (request.abi == KCONC_REGMAP_ABI) {
++		if (request.mode > KCONC_REGMAP_MODE_UPDATE_BITS)
++			return -EINVAL;
++		role_count = KCONC_REGMAP_ROLES;
++	} else {
+ 		return -EINVAL;
+-	mutex_lock(&ctx->guard);
++	}
++	if (request.reserved || request.role >= role_count || request.reg >= KCONC_REGMAP_REGS)
++		return -EINVAL;
++	mutex_lock(&ctx->guard);
++	if (ctx->abi && ctx->abi != request.abi) {
++		ret = -EINVAL;
++		goto reject;
++	}
+ 	if (ctx->state == KCONC_REGMAP_POISONED) {
+ 		ret = -EUCLEAN;
+ 		goto reject;
+@@ -264,20 +285,26 @@
+ }
+ 
+ static long kconc_status(struct kconc_regmap_context *ctx, void __user *arg,
+-			 bool teardown)
+-{
+-	struct kconc_regmap_status request;
++			 bool teardown, u32 abi)
++{
++	struct kconc_regmap_normal_status request;
++	size_t size = abi == KCONC_REGMAP_NORMAL_ABI ? sizeof(request) :
++						     sizeof(struct kconc_regmap_status);
+ 	bool poisoned;
+ 	unsigned int i;
+ 	int ret = 0;
+ 
+-	if (copy_from_user(&request, arg, sizeof(request)))
++	if (copy_from_user(&request, arg, size))
+ 		return -EFAULT;
+-	if (request.abi != KCONC_REGMAP_ABI)
++	if (request.abi != abi)
+ 		return -EINVAL;
+ 	memset(&request, 0, sizeof(request));
+-	request.abi = KCONC_REGMAP_ABI;
+-	mutex_lock(&ctx->guard);
++	request.abi = abi;
++	mutex_lock(&ctx->guard);
++	if (ctx->abi && ctx->abi != abi) {
++		ret = -EINVAL;
++		goto out;
++	}
+ 	if (teardown) {
+ 		if (ctx->active) {
+ 			ret = -EBUSY;
+@@ -309,7 +336,7 @@
+ 	mutex_unlock(&ctx->guard);
+ 	if (ret)
+ 		return ret;
+-	return copy_to_user(arg, &request, sizeof(request)) ? -EFAULT : 0;
++	return copy_to_user(arg, &request, size) ? -EFAULT : 0;
+ }
+ 
+ static long kconc_ioctl(struct file *file, unsigned int command, unsigned long arg)
+@@ -323,9 +350,13 @@
+ 	case KCONC_REGMAP_OP:
+ 		return kconc_operation(ctx, user);
+ 	case KCONC_REGMAP_STATUS:
+-		return kconc_status(ctx, user, false);
++		return kconc_status(ctx, user, false, KCONC_REGMAP_ABI);
+ 	case KCONC_REGMAP_TEARDOWN:
+-		return kconc_status(ctx, user, true);
++		return kconc_status(ctx, user, true, KCONC_REGMAP_ABI);
++	case KCONC_REGMAP_NORMAL_STATUS:
++		return kconc_status(ctx, user, false, KCONC_REGMAP_NORMAL_ABI);
++	case KCONC_REGMAP_NORMAL_TEARDOWN:
++		return kconc_status(ctx, user, true, KCONC_REGMAP_NORMAL_ABI);
+ 	default:
+ 		return -ENOTTY;
+ 	}
+@@ -380,6 +411,11 @@
+ 	static_assert(sizeof(struct kconc_regmap_op) == 64);
+ 	static_assert(sizeof(struct kconc_regmap_role) == 48);
+ 	static_assert(sizeof(struct kconc_regmap_status) == 136);
++	static_assert(sizeof(struct kconc_regmap_normal_status) == 184);
++	static_assert(offsetof(struct kconc_regmap_normal_status, roles) ==
++		      offsetof(struct kconc_regmap_status, roles));
++	static_assert(sizeof(struct kconc_regmap_status) ==
++		      offsetof(struct kconc_regmap_normal_status, roles[KCONC_REGMAP_ROLES]));
+ 	return misc_register(&kconc_device);
+ }
+ device_initcall(kconc_regmap_init);

@@ -1,0 +1,86 @@
+{
+  "bma-i2c": {
+    "owner": "X",
+    "peer": "Y",
+    "natural_boot_id": "c265cc62-e7d2-4eaa-9f33-3f52810c94f3",
+    "trace_sha256": "a01e1ade423e76dcec62768d4f953d23500e777e74318d58b0f34a548377850b",
+    "events": [
+      {
+        "name": "i2c_read",
+        "line": 18
+      },
+      {
+        "name": "board_enter",
+        "line": 19
+      },
+      {
+        "name": "bma_enter",
+        "line": 20
+      },
+      {
+        "name": "board_exit",
+        "line": 21
+      },
+      {
+        "name": "i2c_reply",
+        "line": 22
+      }
+    ]
+  },
+  "ads-i2c": {
+    "owner": "B",
+    "peer": "A",
+    "natural_boot_id": "67beaa99-cc69-4b72-b5e6-8c1f57d6b58b",
+    "trace_sha256": "5c1316e8f6e430274b48f28731de6507024545a19fd7a3b5d4c86ebeb06b5c50",
+    "events": [
+      {
+        "name": "i2c_read",
+        "line": 17
+      },
+      {
+        "name": "board_enter",
+        "line": 18
+      },
+      {
+        "name": "driver_enter",
+        "line": 20
+      },
+      {
+        "name": "board_exit",
+        "line": 21
+      },
+      {
+        "name": "i2c_reply",
+        "line": 22
+      }
+    ]
+  },
+  "ina-i2c": {
+    "owner": "A",
+    "peer": "B",
+    "natural_boot_id": "1f9b3785-8fd3-43c8-a162-b38debc713cd",
+    "trace_sha256": "b7232e04813f00689c0b14b707bf9ef9eee3e03e82b1f92daee43e3d62a9cdb5",
+    "events": [
+      {
+        "name": "i2c_read",
+        "line": 1939
+      },
+      {
+        "name": "board_enter",
+        "line": 1940
+      },
+      {
+        "name": "core_enter",
+        "line": 1941
+      },
+      {
+        "name": "board_exit",
+        "line": 1942
+      },
+      {
+        "name": "i2c_reply",
+        "line": 1943
+      }
+    ]
+  }
+}

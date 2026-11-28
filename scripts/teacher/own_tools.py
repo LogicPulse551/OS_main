@@ -152,6 +152,12 @@ def main():
     sub.add_parser("verify-install", help="verify installed files against the installation receipt")
     if "detect" in components:
         sub.add_parser("detect", add_help=False, help="discover, verify or challenge a build-bound IIO read path")
+        i2c = sub.add_parser("check-i2c", help="compare the order and bus events of two recorded IIO or hwmon reads")
+        for prefix in ("reference", "capture"):
+            i2c.add_argument("--" + prefix, type=Path, required=True, help="sealed I2C capture directory")
+        i2c.add_argument("--reference-keys", nargs=2, required=True, help="ordered operation keys from the reference ops.tsv")
+        i2c.add_argument("--keys", nargs=2, required=True, help="corresponding keys from the new boot's ops.tsv")
+        i2c.add_argument("--out", required=True, type=Path)
         check = sub.add_parser("property", help="check a two-caller property on your observation JSON",
             description="updates expects initial/final four uint32 registers and two operations "
                         "(role, reg, mask, value). mutex expects event_count and four event slots "
@@ -193,6 +199,11 @@ def main():
         return 0
     if args.command == "property":
         return property_check(args)
+    if args.command == "check-i2c":
+        from kconc.i2c_capture import compare
+        result = compare(args.reference, args.reference_keys, args.capture, args.keys)
+        emit(result, args.out)
+        return 0 if result["matched"] else 1
     if args.command == "read-iio":
         return read_iio(args)
     if args.command == "scan":

@@ -40,10 +40,11 @@ class ManifestTests(unittest.TestCase):
         return load_manifest(path)
 
     def test_catalog_is_capabilities_not_completion(self):
-        self.assertEqual(len(CATALOG), 67)
+        self.assertEqual(len(CATALOG), 68)
         self.assertEqual({key for key, value in CATALOG.items() if value["supported"]},
                          {"env.status", "env.check", "build.identity", "artifact.check", "artifact.loaded", "k03.record",
                           "k03.bind", "k03.replay", "k03.view", "result.read", "report.trace", "optimize.bma400", "demo.review",
+                          "native.regmap-two-prelock",
                           "runtime.initialize", "runtime.status", "runtime.recover", "scenario.run", "scenario.cancel",
                           "regmap.initialize", "regmap.status", "regmap.recover", "regmap.baseline",
                           "regmap.fault-reset", "regmap.record", "regmap.replay", "regmap.setup-fault",
@@ -68,6 +69,14 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(actual["runtime"]["scenario_guest_build"], "/home/lab/k03/build")
         self.assertEqual(original, before)
         self.assertFalse((self.base / "vm").exists())
+
+    def test_prelock_binds_inputs_without_overriding_the_kernel(self):
+        task = {"schema_version": 1, "operation": "native.regmap-two-prelock",
+                "inputs": {"bundle": "bundle", "disk": "disk.qcow2", "reference": "previous"}}
+        normalized = normalize_manifest(task, self.base)
+        self.assertEqual(normalized["inputs"]["reference"], str((self.base / "previous").resolve()))
+        self.rejected({**task, "runtime": {"kernel_build": "unregistered"}})
+        self.rejected({**task, "inputs": {"reference": "previous"}})
 
     def test_load_relative_to_manifest_not_process_cwd(self):
         value = {"schema_version": 1, "operation": "result.read", "inputs": {"result": "run/result.json"}}
